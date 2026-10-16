@@ -203,21 +203,27 @@ The red team has <!--n:redteam.attacks-->114<!--/n--> attacks in <!--n:redteam.c
 
 ## Team
 
-# MD Farhan
-BSc in CSE, BRAC University, Bangladesh
-Role: 1. System architecture
-      2. Full-stack development
-      3. AI/ML integration:
-      4. Security engineering
-      5. Integration and testing
+**MD Farhan**  
+_BSc in Computer Science and Engineering, BRAC University, Bangladesh_
 
-# Tonima Hossain
-BSc in Botany, Govt Titumir College, Bangladesh
-Role: 1. Product ideation
-      2. User research
-      3. Requirements definition
-      4. Feature planning
-      5. Product direction
+**Role:**
+1. System Architecture
+2. Full-Stack Development
+3. AI/ML Integration
+4. Security Engineering
+5. Integration and Testing
+
+---
+
+**Tonima Hossain**  
+_BSc in Botany, Government Titumir College, Bangladesh_
+
+**Role:**
+1. Product Ideation
+2. User Research
+3. Requirements Definition
+4. Feature Planning
+5. Product Direction
 
 ## Licence
 
