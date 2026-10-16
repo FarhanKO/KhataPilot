@@ -1,6 +1,6 @@
 # KhataPilot
 
-**An AI CFO for Bangladeshi micro-shops: it keeps the books, warns about cash gaps, pays suppliers safely within the owner's limits, and turns a paper *khata* into an explained credit profile and a matched loan application.** The LLM only proposes; a deterministic guard decides, and a simulated provider refuses anything the guard did not sign.
+**An AI CFO for Bangladeshi micro-shops: it keeps the books, warns about cash gaps, keeps track of all the business and dues, pays suppliers safely within the owner's limits, and turns a paper *khata* into an explained credit profile and a matched loan application.** The LLM only proposes; a deterministic guard decides, and a simulated provider refuses anything the guard did not sign.
 
 Entry for the 2026 Shenzhen International FinTech Competition, International Track, Topic E (SME Finance Copilot).
 
@@ -197,13 +197,27 @@ The red team has <!--n:redteam.attacks-->114<!--/n--> attacks in <!--n:redteam.c
 
 ## Credits and licences
 
-- **Fraud Sentinel** (the team's earlier project, https://github.com/FarhanKO/Fraud-Detection): the dual-layer cascade, calibration, banking risk-cost function and PSI drift method are ported here. Its trained models and its dataset (ULB credit-card fraud, ODbL) are **not** used. PaySim is not used either; payment data of that style is generated in-repo.
+- **Fraud Sentinel** (My earlier project, https://github.com/FarhanKO/Fraud-Detection): the dual-layer cascade, calibration, banking risk-cost function and PSI drift method are ported here. Its trained models and its dataset (ULB credit-card fraud, ODbL) are **not** used. PaySim is not used either; payment data of that style is generated in-repo.
 - **Python dependencies:** FastAPI (MIT), Uvicorn (BSD-3-Clause), Pydantic and pydantic-settings (MIT), SQLAlchemy (MIT), httpx (BSD-3-Clause), argon2-cffi (MIT), PyYAML (MIT), NumPy (BSD-3-Clause), pandas (BSD-3-Clause), scikit-learn (BSD-3-Clause), LightGBM (MIT), SHAP (MIT), Anthropic SDK (MIT), OpenAI SDK (Apache-2.0), pytest (MIT). Among their own dependencies, certifi and tqdm are MPL-2.0 (used unmodified); everything else is permissive (MIT, BSD, Apache-2.0).
 - **Web dependencies:** React and React DOM (MIT), lucide-react (ISC), Geist and Geist Mono fonts via Fontsource (SIL Open Font License 1.1), Tailwind CSS and its Vite plugin (MIT), the status island and voice waveform adapted from KokonutUI (MIT), Vite and @vitejs/plugin-react (MIT), TypeScript (Apache-2.0), React type definitions (MIT).
 
 ## Team
 
-*Team members' names and roles to be added.* BRAC University, Bangladesh.
+# MD Farhan
+BSc in CSE, BRAC University, Bangladesh
+Role: 1. System architecture
+      2. Full-stack development
+      3. AI/ML integration:
+      4. Security engineering
+      5. Integration and testing
+
+# Tonima Hossain
+BSc in Botany, Govt Titumir College, Bangladesh
+Role: 1. Product ideation
+      2. User research
+      3. Requirements definition
+      4. Feature planning
+      5. Product direction
 
 ## Licence
 
