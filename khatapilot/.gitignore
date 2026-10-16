@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Secrets — only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Runtime state (databases, logs, generated data)
+var/
+sandbox/var/
+data/generated/
+data/raw/
+data/real_samples/
+backend/models_store/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# Generated evidence is committed only via scripts/export_evidence.py output
+evidence/tmp/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,17 @@
+[project]
+name = "khatapilot"
+version = "0.1.0"
+description = "An AI CFO for Bangladeshi micro-shops, with a deterministic guard between the LLM and the money."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+pythonpath = ["backend", "."]
+testpaths = ["backend/tests", "sandbox/tests", "data/tests", "redteam/tests"]
+addopts = "-q -m 'not live'"
+markers = [
+    "live: runs against a real LLM provider (needs an API key; skipped by default)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:shap.*",
+]

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#282420" />
+    <title>KhataPilot</title>
+    <!-- The mark from src/components/Logo.tsx on the dark tile: an open khata with a compass needle. -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23282420'/%3E%3Cg fill='none' stroke='%23fbebd8' stroke-width='2.4'%3E%3Cpath d='M5 12.5c3.5-1.6 7.5-1.4 11 1 3.5-2.4 7.5-2.6 11-1V25c-3.5-1.6-7.5-1.4-11 1-3.5-2.4-7.5-2.6-11-1z' stroke-linejoin='round'/%3E%3Cpath d='M16 14v11.5' stroke-linecap='round'/%3E%3C/g%3E%3Cpath d='M16 2.8l2.5 5.4L16 12.2l-2.5-4z' fill='%23fbebd8'/%3E%3C/svg%3E" />
+    <script>
+      // Apply the theme before the first paint: ?theme=dark|light, else the saved choice, else light.
+      try {
+        const asked = new URLSearchParams(location.search).get("theme");
+        if ((asked || localStorage.getItem("kp.theme")) === "dark") document.documentElement.dataset.theme = "dark";
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

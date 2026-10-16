@@ -1,0 +1,163 @@
+{
+  "version": "fraud-sentinel-mm-v1",
+  "train_payments": 38507,
+  "test_payments": 11583,
+  "train_fraud_rate": 0.0238,
+  "test_fraud_rate": 0.0233,
+  "split": "chronological: last 15 days held out",
+  "layer2": {
+    "roc_auc": 0.9926,
+    "pr_auc": 0.8933,
+    "brier": 0.0056,
+    "calibration": [
+      {
+        "predicted": 0.004,
+        "observed": 0.003
+      },
+      {
+        "predicted": 0.135,
+        "observed": 0.168
+      },
+      {
+        "predicted": 0.243,
+        "observed": 0.417
+      },
+      {
+        "predicted": 0.339,
+        "observed": 0.462
+      },
+      {
+        "predicted": 0.437,
+        "observed": 0.667
+      },
+      {
+        "predicted": 0.539,
+        "observed": 0.8
+      },
+      {
+        "predicted": 0.643,
+        "observed": 0.833
+      },
+      {
+        "predicted": 0.742,
+        "observed": 0.714
+      },
+      {
+        "predicted": 0.871,
+        "observed": 1.0
+      },
+      {
+        "predicted": 0.994,
+        "observed": 1.0
+      }
+    ]
+  },
+  "cascade_at_medium": {
+    "recall": 0.7704,
+    "precision": 0.6361,
+    "false_alarm_rate": 0.0105,
+    "missed_fraud_taka": 564212.9,
+    "false_alarms": 119,
+    "banking_risk_cost_taka": 570162.9
+  },
+  "cascade_at_high": {
+    "recall": 0.7,
+    "precision": 0.9742,
+    "false_alarm_rate": 0.0004,
+    "missed_fraud_taka": 776951.25,
+    "false_alarms": 5,
+    "banking_risk_cost_taka": 777201.25
+  },
+  "rules_baseline_at_medium": {
+    "recall": 0.4333,
+    "precision": 0.5735,
+    "false_alarm_rate": 0.0077,
+    "missed_fraud_taka": 1247335.79,
+    "false_alarms": 87,
+    "banking_risk_cost_taka": 1251685.79
+  },
+  "layer1_escalated_legit_rate": 0.0098,
+  "per_typology": {
+    "legit_bill": {
+      "payments": 1019,
+      "flagged_rate": 0.0059,
+      "blocked_rate": 0.0,
+      "rules_flagged_rate": 0.0
+    },
+    "legit_new_large": {
+      "payments": 113,
+      "flagged_rate": 0.1681,
+      "blocked_rate": 0.0088,
+      "rules_flagged_rate": 0.6372
+    },
+    "legit_new_small": {
+      "payments": 1153,
+      "flagged_rate": 0.0564,
+      "blocked_rate": 0.0035,
+      "rules_flagged_rate": 0.0
+    },
+    "legit_new_supplier": {
+      "payments": 65,
+      "flagged_rate": 0.1231,
+      "blocked_rate": 0.0,
+      "rules_flagged_rate": 0.2308
+    },
+    "legit_regular": {
+      "payments": 2963,
+      "flagged_rate": 0.002,
+      "blocked_rate": 0.0,
+      "rules_flagged_rate": 0.0
+    },
+    "legit_supplier": {
+      "payments": 6000,
+      "flagged_rate": 0.0025,
+      "blocked_rate": 0.0,
+      "rules_flagged_rate": 0.0
+    },
+    "scam_large": {
+      "payments": 22,
+      "flagged_rate": 0.8636,
+      "blocked_rate": 0.8182,
+      "rules_flagged_rate": 1.0
+    },
+    "scam_small": {
+      "payments": 23,
+      "flagged_rate": 0.0,
+      "blocked_rate": 0.0,
+      "rules_flagged_rate": 0.0
+    },
+    "spoof_supplier": {
+      "payments": 41,
+      "flagged_rate": 0.4878,
+      "blocked_rate": 0.3902,
+      "rules_flagged_rate": 0.3902
+    },
+    "structuring": {
+      "payments": 84,
+      "flagged_rate": 0.9524,
+      "blocked_rate": 0.9167,
+      "rules_flagged_rate": 0.1786
+    },
+    "takeover_burst": {
+      "payments": 100,
+      "flagged_rate": 0.89,
+      "blocked_rate": 0.78,
+      "rules_flagged_rate": 0.64
+    }
+  },
+  "psi": {
+    "log_amount": 0.0003,
+    "amount_to_daily_sales": 0.0011,
+    "amount_to_payee_usual": 0.0018,
+    "has_history": 0.0,
+    "log_history": 0.0041,
+    "payee_trusted": 0.0,
+    "is_night": 0.0,
+    "hour_sin": 0.0008,
+    "hour_cos": 0.0007,
+    "payments_last_hour": 0.0,
+    "payments_last_day": 0.0002,
+    "new_payees_last_day": 0.0
+  },
+  "cost_function": "banking risk cost = 1.0 x missed fraud taka + 50.0 x false alarms"
+}

@@ -1,0 +1,328 @@
+@import "tailwindcss";
+
+/* Semantic colour tokens. Components use these names only, so light and dark mode are one swap.
+   The look: a warm paper ledger (light) and an espresso night ledger (dark), with ink-dark controls.
+   Red is reserved for STOP and refusals; nothing decorative uses it. */
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-bar: var(--bar);
+  --color-bar-ink: var(--bar-ink);
+  --color-bar-muted: var(--bar-muted);
+  --color-bar-line: var(--bar-line);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-stop: var(--stop);
+  --font-sans: "Geist Variable", "Nirmala UI", "Noto Sans Bengali", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "Nirmala UI", "Noto Sans Bengali", ui-monospace, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+  --page: #f6eadb;
+  --surface: #fff9f1;
+  --raised: #f1e3d1;
+  --line: #e4d3be;
+  --line-strong: #cbb69c;
+  --ink: #282420;
+  --muted: #5f564c;
+  --faint: #7d7164;
+  --brand: #282420;
+  --brand-ink: #fbebd8;
+  --brand-soft: #ebdcc9;
+  --bar: #282420;
+  --bar-ink: #fbebd8;
+  --bar-muted: #a99c8c;
+  --bar-line: #443d36;
+  --ok: #2e7a4c;
+  --ok-soft: #e2eedd;
+  --warn: #9a5a0b;
+  --warn-soft: #f8e4c6;
+  --bad: #c4372b;
+  --bad-soft: #f8ddd3;
+  --info: #3a5a8a;
+  --info-soft: #e1e6ee;
+  /* STOP and other destructive controls: the same strong red in both themes, always with white text. */
+  --stop: #c4372b;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #1a1714;
+  --surface: #221e1a;
+  --raised: #2b2621;
+  --line: #3a332c;
+  --line-strong: #4f463c;
+  --ink: #f4e8d8;
+  --muted: #c2b4a3;
+  --faint: #978a7c;
+  --brand: #fbebd8;
+  --brand-ink: #1f1b17;
+  --brand-soft: #3a322a;
+  --bar: #110e0c;
+  --bar-ink: #f4e8d8;
+  --bar-muted: #9a8e80;
+  --bar-line: #332d27;
+  --ok: #86c79b;
+  --ok-soft: #1e2d22;
+  --warn: #e6ae5c;
+  --warn-soft: #33281a;
+  --bad: #f2806f;
+  --bad-soft: #3b1f1a;
+  --info: #9db5dc;
+  --info-soft: #1f2733;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* In the components layer so a utility on the same element (text-[10px], tracking-…) still wins. */
+@layer components {
+  /* Headlines: Geist at regular weight with tight tracking, as on a printed ledger cover. */
+  .display {
+    font-weight: 420;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+  }
+
+  /* Mono labels with a small square marker: section names, ledger columns, trace metadata. */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+}
+
+@keyframes flash-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.flash-in {
+  animation: flash-in 0.25s ease-out;
+}
+
+/* A provider balance that just changed glows for a moment, so money moving (or not) is seen beside the trace. */
+@keyframes balance-moved {
+  from {
+    background-color: var(--raised);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 14%, transparent);
+  }
+  to {
+    background-color: var(--surface);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.balance-moved {
+  animation: balance-moved 1.8s ease-out;
+}
+
+/* A refusal lands like a rubber stamp on the page. */
+@keyframes stamp-in {
+  0% {
+    opacity: 0;
+    transform: rotate(-6deg) scale(1.6);
+  }
+  60% {
+    opacity: 1;
+    transform: rotate(-6deg) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-6deg) scale(1);
+  }
+}
+
+.stamp {
+  transform: rotate(-6deg);
+}
+
+.stamp-in {
+  animation: stamp-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+@keyframes typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.typing > span {
+  animation: typing 1.2s infinite;
+}
+
+.typing > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* The message box's moving glow: a gradient ring that circles the box, with a soft halo behind it.
+   Wrap the box in .glow-ring; the ring sits over the box's border, the halo under the box. */
+@property --glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes glow-spin {
+  to {
+    --glow-angle: 360deg;
+  }
+}
+
+.glow-ring {
+  position: relative;
+}
+
+.glow-ring::before,
+.glow-ring::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+  /* Two ink-coloured arcs on opposite sides: blackish on paper, whitish at night, softer than the ink. */
+  --glow: color-mix(in srgb, var(--ink) 60%, transparent);
+  background: conic-gradient(
+    from var(--glow-angle),
+    transparent 0deg,
+    var(--glow) 45deg,
+    transparent 90deg 180deg,
+    var(--glow) 225deg,
+    transparent 270deg
+  );
+  animation: glow-spin 5s linear infinite;
+}
+
+.glow-ring::before {
+  inset: 0;
+  filter: blur(12px);
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+
+.glow-ring:focus-within::before {
+  opacity: 0.55;
+}
+
+/* Inside the message box the rounded box itself shows focus: its border darkens and a soft ring
+   fades in around it, so the fields drop the global square outline. Unlayered like :focus-visible
+   above, so these win over the utilities on the box. */
+.glow-ring textarea:focus-visible {
+  outline: none;
+}
+
+.glow-ring > form {
+  transition:
+    border-color 0.3s ease-out,
+    box-shadow 0.3s ease-out;
+}
+
+.glow-ring > form:focus-within {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--ink) 8%, transparent),
+    0 10px 30px -18px rgba(40, 36, 32, 0.45);
+}
+
+.glow-ring::after {
+  inset: -1px;
+  padding: 2px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-in,
+  .stamp-in,
+  .balance-moved,
+  .typing > span,
+  .glow-ring::before,
+  .glow-ring::after {
+    animation: none;
+  }
+
+  .glow-ring > form {
+    transition: none;
+  }
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* Dotted leaders between a label and its value, like a printed receipt. */
+.leader {
+  flex: 1;
+  min-width: 1rem;
+  border-bottom: 1px dotted var(--line-strong);
+  transform: translateY(-0.3em);
+}

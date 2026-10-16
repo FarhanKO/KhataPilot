@@ -1,0 +1,16 @@
+{
+  "what": "The README quick start timed on a fresh clone, with empty pip and npm caches (every package downloaded).",
+  "measured_on": "2026-10-15",
+  "commit": "ca1c6a7 (training fix from this milestone applied for the training step)",
+  "machine": "Windows 11 laptop, Python 3.13, Node 24, home broadband",
+  "steps": [
+    {"step": "python -m venv .venv; pip install -r requirements-dev.txt (no pip cache)", "seconds": 255},
+    {"step": "npm ci in frontend/ (empty npm cache)", "seconds": 33},
+    {"step": "first-run data generation and training: scripts/train_models.py, scripts/train_credit.py", "seconds": 22},
+    {"step": "python -m pytest (mock mode, no key, no network)", "seconds": 193}
+  ],
+  "total_seconds": 503,
+  "tests_passed": 527,
+  "tests_failed": 0,
+  "notes": "Fraud Sentinel and the credit model trained on the fresh clone reproduce docs/results/*.json exactly."
+}

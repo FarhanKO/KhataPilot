@@ -1,0 +1,475 @@
+{
+  "model": "khata-credit-v1",
+  "shops": 400,
+  "default_rate": 0.1725,
+  "features_scored": [
+    "sales_volatility",
+    "sales_growth",
+    "cash_buffer_days",
+    "baki_collection_rate",
+    "baki_days_outstanding",
+    "supplier_on_time",
+    "months_of_history",
+    "drawings_share",
+    "informal_borrowing"
+  ],
+  "features_shown_not_scored": [
+    "avg_daily_sales",
+    "gross_margin",
+    "mobile_money_share"
+  ],
+  "rounds": 100,
+  "log_loss_by_rounds": {
+    "60": 0.4084331559812571,
+    "100": 0.4069735685557621,
+    "150": 0.40862930692453436,
+    "200": 0.41253294472446156
+  },
+  "oof": {
+    "roc_auc": 0.7290161565742808,
+    "pr_auc": 0.39925458098232586,
+    "brier": 0.1250634728962805,
+    "ece": 0.0335954812668365
+  },
+  "oof_uncalibrated": {
+    "roc_auc": 0.7290161565742808,
+    "pr_auc": 0.39925458098232586,
+    "brier": 0.12503047942807474,
+    "ece": 0.03203796256167687
+  },
+  "oof_roc_auc_repeats": [
+    0.7290161565742808,
+    0.7048688646613249,
+    0.7291037260825781,
+    0.7433556635579491,
+    0.7236744165681509,
+    0.7405972240465869,
+    0.7520907220105957,
+    0.7380796006830422
+  ],
+  "baseline_logistic": {
+    "roc_auc": 0.6899601558737248,
+    "pr_auc": 0.41609640058653663,
+    "brier": 0.12686962599637502,
+    "ece": 0.05517779035437816
+  },
+  "true_pd": {
+    "mae": 0.08307100436119544,
+    "correlation": 0.6496415712080487,
+    "oracle_roc_auc": 0.778777529664171
+  },
+  "reliability": [
+    {
+      "predicted": 0.05012945556254424,
+      "observed": 0.025,
+      "shops": 40
+    },
+    {
+      "predicted": 0.06325397798990084,
+      "observed": 0.1,
+      "shops": 40
+    },
+    {
+      "predicted": 0.07670791057388024,
+      "observed": 0.075,
+      "shops": 40
+    },
+    {
+      "predicted": 0.09548302463391996,
+      "observed": 0.075,
+      "shops": 40
+    },
+    {
+      "predicted": 0.11463460445318577,
+      "observed": 0.2,
+      "shops": 40
+    },
+    {
+      "predicted": 0.13888495800426798,
+      "observed": 0.1,
+      "shops": 40
+    },
+    {
+      "predicted": 0.17656551363351614,
+      "observed": 0.175,
+      "shops": 40
+    },
+    {
+      "predicted": 0.22894237969714631,
+      "observed": 0.2,
+      "shops": 40
+    },
+    {
+      "predicted": 0.30125881451973535,
+      "observed": 0.25,
+      "shops": 40
+    },
+    {
+      "predicted": 0.47912866151355865,
+      "observed": 0.525,
+      "shops": 40
+    }
+  ],
+  "platt": [
+    0.9394689225847844,
+    -0.04685994359098509
+  ],
+  "bands": {
+    "A": 16,
+    "B": 136,
+    "C": 132,
+    "D": 74,
+    "E": 42
+  },
+  "approval": {
+    "approve_below": 0.2,
+    "approval_rate": 0.71,
+    "default_rate_approved": 0.1056338028169014,
+    "default_rate_declined": 0.33620689655172414
+  },
+  "fairness": {
+    "approve_below": 0.2,
+    "shop_type": {
+      "groups": [
+        {
+          "group": "grocery",
+          "shops": 166,
+          "default_rate": 0.20481927710843373,
+          "default_rate_ci95": [
+            0.15043484537017962,
+            0.2725569304962747
+          ],
+          "mean_predicted": 0.17880395765383827,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.6807228915662651,
+          "approval_rate_good_payers": 0.7651515151515151,
+          "default_rate_if_approved": 0.10619469026548672,
+          "roc_auc": 0.7729500891265597
+        },
+        {
+          "group": "mobile_recharge",
+          "shops": 61,
+          "default_rate": 0.13114754098360656,
+          "default_rate_ci95": [
+            0.06797996145868099,
+            0.23802112426406494
+          ],
+          "mean_predicted": 0.17016533066566683,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.6557377049180327,
+          "approval_rate_good_payers": 0.6792452830188679,
+          "default_rate_if_approved": 0.1,
+          "roc_auc": 0.7193396226415094
+        },
+        {
+          "group": "pharmacy",
+          "shops": 95,
+          "default_rate": 0.14736842105263157,
+          "default_rate_ci95": [
+            0.0898599863410513,
+            0.23228777330670836
+          ],
+          "mean_predicted": 0.16575224307350564,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.7789473684210526,
+          "approval_rate_good_payers": 0.8271604938271605,
+          "default_rate_if_approved": 0.0945945945945946,
+          "roc_auc": 0.6746031746031746
+        },
+        {
+          "group": "tea_stall",
+          "shops": 78,
+          "default_rate": 0.16666666666666666,
+          "default_rate_ci95": [
+            0.10006850973163443,
+            0.26455779278444536
+          ],
+          "mean_predicted": 0.16912265115564556,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.7307692307692307,
+          "approval_rate_good_payers": 0.7692307692307693,
+          "default_rate_if_approved": 0.12280701754385964,
+          "roc_auc": 0.6568047337278106
+        }
+      ],
+      "approval_ratio_min_max": 0.8418254319893663,
+      "good_payer_approval_gap": 0.14791521080829262,
+      "max_calibration_gap": 0.03901778968206027
+    },
+    "urbanicity": {
+      "groups": [
+        {
+          "group": "rural",
+          "shops": 99,
+          "default_rate": 0.18181818181818182,
+          "default_rate_ci95": [
+            0.11821769885745204,
+            0.2691897315987058
+          ],
+          "mean_predicted": 0.17938504871217256,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.696969696969697,
+          "approval_rate_good_payers": 0.7037037037037037,
+          "default_rate_if_approved": 0.17391304347826086,
+          "roc_auc": 0.5761316872427984
+        },
+        {
+          "group": "semi_urban",
+          "shops": 107,
+          "default_rate": 0.17757009345794392,
+          "default_rate_ci95": [
+            0.11672859553461687,
+            0.26076144430602055
+          ],
+          "mean_predicted": 0.19617631996257326,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.6448598130841121,
+          "approval_rate_good_payers": 0.75,
+          "default_rate_if_approved": 0.043478260869565216,
+          "roc_auc": 0.8672248803827751
+        },
+        {
+          "group": "urban",
+          "shops": 194,
+          "default_rate": 0.16494845360824742,
+          "default_rate_ci95": [
+            0.1193303543951956,
+            0.22357831597544434
+          ],
+          "mean_predicted": 0.15592570084930824,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.7525773195876289,
+          "approval_rate_good_payers": 0.808641975308642,
+          "default_rate_if_approved": 0.10273972602739725,
+          "roc_auc": 0.7390046296296297
+        }
+      ],
+      "approval_ratio_min_max": 0.856868518755601,
+      "good_payer_approval_gap": 0.1049382716049383,
+      "max_calibration_gap": 0.018606226504629342
+    },
+    "division": {
+      "groups": [
+        {
+          "group": "Barishal",
+          "shops": 30,
+          "default_rate": 0.2,
+          "default_rate_ci95": [
+            0.09504978102401235,
+            0.37306047381027446
+          ],
+          "mean_predicted": 0.1863075566498954,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.8,
+          "approval_rate_good_payers": 0.7916666666666666,
+          "default_rate_if_approved": 0.20833333333333334,
+          "roc_auc": 0.6041666666666667
+        },
+        {
+          "group": "Chattogram",
+          "shops": 64,
+          "default_rate": 0.15625,
+          "default_rate_ci95": [
+            0.08714748876961673,
+            0.26428290202305327
+          ],
+          "mean_predicted": 0.15031761652387968,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.75,
+          "approval_rate_good_payers": 0.8333333333333334,
+          "default_rate_if_approved": 0.0625,
+          "roc_auc": 0.85
+        },
+        {
+          "group": "Dhaka",
+          "shops": 153,
+          "default_rate": 0.11764705882352941,
+          "default_rate_ci95": [
+            0.0757259238487767,
+            0.1782985186460716
+          ],
+          "mean_predicted": 0.1739877498527983,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.7124183006535948,
+          "approval_rate_good_payers": 0.762962962962963,
+          "default_rate_if_approved": 0.05504587155963303,
+          "roc_auc": 0.7781893004115226
+        },
+        {
+          "group": "Khulna",
+          "shops": 30,
+          "default_rate": 0.2,
+          "default_rate_ci95": [
+            0.09504978102401235,
+            0.37306047381027446
+          ],
+          "mean_predicted": 0.1906091207937373,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.6333333333333333,
+          "approval_rate_good_payers": 0.75,
+          "default_rate_if_approved": 0.05263157894736842,
+          "roc_auc": 0.8541666666666667
+        },
+        {
+          "group": "Mymensingh",
+          "shops": 25,
+          "default_rate": 0.12,
+          "default_rate_ci95": [
+            0.04166741357068093,
+            0.2995619218337349
+          ],
+          "mean_predicted": 0.18154934284481322,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.68,
+          "approval_rate_good_payers": 0.6818181818181818,
+          "default_rate_if_approved": 0.11764705882352941,
+          "roc_auc": null
+        },
+        {
+          "group": "Rajshahi",
+          "shops": 25,
+          "default_rate": 0.28,
+          "default_rate_ci95": [
+            0.1428367383738157,
+            0.47576971896558296
+          ],
+          "mean_predicted": 0.209847427122114,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.6,
+          "approval_rate_good_payers": 0.7777777777777778,
+          "default_rate_if_approved": 0.06666666666666667,
+          "roc_auc": 0.8333333333333334
+        },
+        {
+          "group": "Rangpur",
+          "shops": 44,
+          "default_rate": 0.20454545454545456,
+          "default_rate_ci95": [
+            0.11153127823467596,
+            0.34500863681833227
+          ],
+          "mean_predicted": 0.1734354443610884,
+          "calibrated_within_ci": true,
+          "approval_rate": 0.6363636363636364,
+          "approval_rate_good_payers": 0.6571428571428571,
+          "default_rate_if_approved": 0.17857142857142858,
+          "roc_auc": 0.6031746031746031
+        },
+        {
+          "group": "Sylhet",
+          "shops": 29,
+          "default_rate": 0.3448275862068966,
+          "default_rate_ci95": [
+            0.19940508749190483,
+            0.5265522349284402
+          ],
+          "mean_predicted": 0.13915654185826662,
+          "calibrated_within_ci": false,
+          "approval_rate": 0.8275862068965517,
+          "approval_rate_good_payers": 0.8947368421052632,
+          "default_rate_if_approved": 0.2916666666666667,
+          "roc_auc": 0.7
+        }
+      ],
+      "approval_ratio_min_max": 0.725,
+      "good_payer_approval_gap": 0.23759398496240602,
+      "max_calibration_gap": 0.20567104434862996
+    }
+  },
+  "ablation": [
+    {
+      "variant": "All 12 features scored",
+      "features": 12,
+      "roc_auc": 0.7278941722492228,
+      "brier": 0.12509501912339385,
+      "shop_type_approval_ratio": 0.849738849179734,
+      "shop_type_good_payer_gap": 0.13085255066387144,
+      "urbanicity_approval_ratio": 0.8241164455757494,
+      "urbanicity_good_payer_gap": 0.1481481481481481
+    },
+    {
+      "variant": "Behaviour only (the model)",
+      "features": 9,
+      "roc_auc": 0.7325982967730635,
+      "brier": 0.12440521706474977,
+      "shop_type_approval_ratio": 0.867100721927484,
+      "shop_type_good_payer_gap": 0.10999509894950149,
+      "urbanicity_approval_ratio": 0.8534244949738653,
+      "urbanicity_good_payer_gap": 0.11188271604938273
+    }
+  ],
+  "feature_importance": {
+    "supplier_on_time": 0.41696399528405614,
+    "sales_volatility": 0.34776239571857,
+    "baki_days_outstanding": 0.189676861371147,
+    "drawings_share": 0.16176205019461365,
+    "months_of_history": 0.11341691367447927,
+    "sales_growth": 0.10831142099883197,
+    "baki_collection_rate": 0.09447020832610026,
+    "cash_buffer_days": 0.06320665176715096,
+    "informal_borrowing": 0.061243285209012274
+  },
+  "shap_check_max_abs_diff": 0.0,
+  "peers": {
+    "avg_daily_sales": {
+      "p25": 5237.8625,
+      "median": 7634.319444444444,
+      "p75": 11678.662499999999
+    },
+    "sales_volatility": {
+      "p25": 0.09414943256220049,
+      "median": 0.11108964363675161,
+      "p75": 0.13355814408487468
+    },
+    "sales_growth": {
+      "p25": -0.002773970887596122,
+      "median": 0.16757774972284134,
+      "p75": 0.37762840351762905
+    },
+    "gross_margin": {
+      "p25": 0.12789420895917733,
+      "median": 0.1623166816927275,
+      "p75": 0.2137510031127671
+    },
+    "cash_buffer_days": {
+      "p25": 2.327168692395033,
+      "median": 3.140469863717775,
+      "p75": 4.593369334381071
+    },
+    "baki_collection_rate": {
+      "p25": 0.9125598175603029,
+      "median": 0.9375967517349154,
+      "p75": 0.9635766148035161
+    },
+    "baki_days_outstanding": {
+      "p25": 13.394242274596026,
+      "median": 18.8382368363417,
+      "p75": 25.364679260455233
+    },
+    "supplier_on_time": {
+      "p25": 0.6460327074500303,
+      "median": 0.7692307692307693,
+      "p75": 0.8527131782945736
+    },
+    "mobile_money_share": {
+      "p25": 0.22951088119862922,
+      "median": 0.37890603415569657,
+      "p75": 0.511819967796445
+    },
+    "months_of_history": {
+      "p25": 7.8,
+      "median": 9.350000000000001,
+      "p75": 10.625
+    },
+    "drawings_share": {
+      "p25": 0.05242773232968744,
+      "median": 0.0782720901458484,
+      "p75": 0.11980461762665813
+    },
+    "informal_borrowing": {
+      "p25": 0.0,
+      "median": 0.0,
+      "p75": 0.0
+    }
+  }
+}

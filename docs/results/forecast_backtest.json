@@ -1,0 +1,28 @@
+{
+  "windows": 6239,
+  "shops": 401,
+  "horizon_days": 14,
+  "history_days": 56,
+  "model": {
+    "daily_wape": 0.21112310612552956,
+    "total_14d_median_ape": 0.06530566264457026,
+    "total_14d_p90_ape": 0.17339404073718753,
+    "total_7d_median_ape": 0.07921478805084187,
+    "bias": -0.032437483277399495
+  },
+  "naive_last_week": {
+    "daily_wape": 0.2941988099639793,
+    "total_14d_median_ape": 0.08667129332582592,
+    "total_14d_p90_ape": 0.23658522298218015,
+    "total_7d_median_ape": 0.09859576454814264,
+    "bias": -0.0011970328379031898
+  },
+  "naive_mean_28d": {
+    "daily_wape": 0.2226271392887996,
+    "total_14d_median_ape": 0.06870122352847219,
+    "total_14d_p90_ape": 0.21317017881604902,
+    "total_7d_median_ape": 0.0833423402001686,
+    "bias": -0.0030583901140434863
+  },
+  "band_80_coverage_14d_total": 0.8608751402468344
+}

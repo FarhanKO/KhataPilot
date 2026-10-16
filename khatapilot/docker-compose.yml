@@ -1,0 +1,48 @@
+# Optional: `python scripts/make_env.py` first (creates .env), then `docker compose up --build`.
+# The PowerShell path (scripts\dev.ps1) is the primary way to run KhataPilot; this is a convenience.
+services:
+  sandbox:
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+    command: python -m uvicorn sandbox.app:create_app --factory --host 0.0.0.0 --port 8100
+    env_file: .env
+    ports:
+      - "8100:8100"
+    volumes:
+      - sandbox-var:/app/sandbox/var
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+    command: python -m uvicorn app.main:create_app --factory --app-dir backend --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      SANDBOX_URL: http://sandbox:8100
+    ports:
+      - "8000:8000"
+    depends_on:
+      - sandbox
+    volumes:
+      - backend-var:/app/var
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app/frontend
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    env_file: .env
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend-modules:/app/frontend/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  sandbox-var:
+  backend-var:
+  frontend-modules:
