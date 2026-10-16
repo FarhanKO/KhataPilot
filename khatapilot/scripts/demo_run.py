@@ -695,7 +695,7 @@ def _link(out_dir: Path, target: Path) -> str:
     try:
         return Path(os.path.relpath(target, out_dir)).as_posix()
     except ValueError:  # written to another drive (a test's temp folder): fall back to the repo-relative path
-        return target.relative_to(ROOT).as_posix()
+        return target.relative_to(DOCS_ROOT).as_posix()
 
 
 def write_run(demo: Demo, records: list[StepRecord], out_dir: Path, started_at: str) -> dict:

@@ -274,17 +274,17 @@ def update(check: bool = False, skip: tuple[str, ...] = ()) -> list[str]:
         text = path.read_text(encoding="utf-8")
         def missing(key: str, p: Path = path) -> None:
             if not (skip and key.startswith(skip)):
-                problems.append(f"{p.relative_to(ROOT)}: no value for {key!r}")
+                problems.append(f"{p.relative_to(DOCS_ROOT)}: no value for {key!r}")
 
         new = render(text, n, t, missing)
         if new != text:
             if check:
                 stale = [m.group(1) for m in NUMBER.finditer(text) if m.group(1) in n and m.group(2) != n[m.group(1)]]
                 stale += [m.group(2) for m in TABLE.finditer(text) if m.group(2) in t and m.group(3) != t[m.group(2)]]
-                problems.append(f"{path.relative_to(ROOT)}: out of date: {', '.join(stale)}")
+                problems.append(f"{path.relative_to(DOCS_ROOT)}: out of date: {', '.join(stale)}")
             else:
                 path.write_text(new, encoding="utf-8")
-                print(f"Updated {path.relative_to(ROOT)}")
+                print(f"Updated {path.relative_to(DOCS_ROOT)}")
     return problems
 
 
