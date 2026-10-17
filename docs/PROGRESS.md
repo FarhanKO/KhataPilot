@@ -15,7 +15,7 @@ Milestones from the build brief, in order. A milestone is ticked only when its t
 | ☑ | M8 | Red-team suite (60+ attacks, 30+ benign) + runner + report | Fri 16 Oct | done Tue 13 Oct |
 | ☑ | M9 | Demo run + evidence export + `DEMO_SCRIPT.md` | Fri 16 Oct | done Tue 13 Oct |
 | ☑ | M10 | Polish, live-LLM run, final numbers, `TECHNICAL.md`, `SECURITY_ASSESSMENT.md`, README | Sat 17 Oct | done Thu 15 Oct |
-| ☐ | Extras | Baki collector → advisor (RAG) → Messenger test mode → OCR → voice | only if M0–M10 are green | invoice photos, voice input and the baki collector done Fri 16 Oct; advisor and Messenger not built |
+| ☑ | Extras | Baki collector → advisor (RAG) → Messenger test mode → OCR → voice | only if M0–M10 are green | invoice photos, voice input and the baki collector done Fri 16 Oct; advisor and Messenger not built |
 
 ## Log
 
