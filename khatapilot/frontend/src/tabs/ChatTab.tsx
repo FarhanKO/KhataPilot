@@ -8,6 +8,7 @@ import { StatusIsland, type IslandTask } from "../components/StatusIsland";
 import { VoiceButton } from "../components/VoiceButton";
 import { dayLabel, greeting, taka, timeLabel } from "../format";
 import { useData } from "../hooks";
+import { replyLines, type Span } from "../markdown";
 import { MAX_FORWARDED, readInvoicePhotos, SAMPLE_PHOTOS } from "../photo";
 import { LANG_NAMES, useVoice } from "../voice";
 import { useApp, type ChatMessage, type Forwarded, type TabId } from "../state";
@@ -140,8 +141,8 @@ function Bubble({ message }: { message: ChatMessage }) {
         KhataPilot · {timeLabel(message.at)}
       </span>
       {message.text && (
-        <div className="max-w-[min(92%,38rem)] rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-3 text-[14.5px] leading-relaxed whitespace-pre-line">
-          {message.text}
+        <div className="max-w-[min(92%,38rem)] rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-3 text-[14.5px] leading-relaxed">
+          <ReplyText text={message.text} />
         </div>
       )}
       {!!message.outcomes?.length && (
@@ -647,5 +648,47 @@ export function ChatTab() {
         </div>
       </div>
     </div>
+  );
+}
+
+function Inline({ spans }: { spans: Span[] }) {
+  return (
+    <>
+      {spans.map((s, i) =>
+        s.bold ? (
+          <strong key={i} className="font-semibold">
+            {s.text}
+          </strong>
+        ) : (
+          <span key={i}>{s.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/** A reply with the model's light markdown (**bold**, "- " bullets) shown as formatting, never as markup. */
+function ReplyText({ text }: { text: string }) {
+  return (
+    <>
+      {replyLines(text).map((line, i) =>
+        line.bullet ? (
+          <div key={i} className="flex gap-2 pl-1">
+            <span aria-hidden className="text-faint">
+              •
+            </span>
+            <span className="min-w-0">
+              <Inline spans={line.spans} />
+            </span>
+          </div>
+        ) : line.spans.length ? (
+          <div key={i}>
+            <Inline spans={line.spans} />
+          </div>
+        ) : (
+          <div key={i} aria-hidden className="h-2.5" />
+        ),
+      )}
+    </>
   );
 }
