@@ -2,6 +2,7 @@ import { ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { timeLabel, TIER_NAMES } from "../format";
+import { plainReply } from "../markdown";
 import type { AuditEntry, Check, Segment, TraceEvent } from "../types";
 import { Badge, Empty, Eyebrow, Marker, Segmented, TONE_TEXT, type Tone } from "../ui";
 
@@ -255,7 +256,7 @@ function ThreadCard({ thread, defaultOpen }: { thread: Thread; defaultOpen: bool
         {open && thread.reply && (
           <div className="border-t border-line pt-2.5 text-xs leading-relaxed text-muted">
             <span className="label mr-1.5 text-[10px] text-ink">Reply</span>
-            {thread.reply.text}
+            {plainReply(thread.reply.text)}
           </div>
         )}
       </div>
