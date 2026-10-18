@@ -1,9 +1,9 @@
 # KhataPilot Documentation & Deliverables Index
 
 ---
-## 🏆 Official Competition Deliverables (Checklist)
+## Competition Deliverables
 Every required submission item specified by the official competition rules is indexed below:
-| # | Official Deliverable | Location in Repository | Description |
+| # | Deliverable | Location in Repository | Description |
 |---|---|---|---|
 | **01** | **Technical Documentation** | [TECHNICAL.md](TECHNICAL.md) | System architecture (L0–L5), core algorithms, WeBank WeiYeDai credit model, and FATE roadmap. |
 | **02** | **Presentation Deck** | [Deck PDF](PRESENTATION_DECK.pdf) | 10-minute presentation deck covering the problem, architecture, demo, and WeBank alignment. |
