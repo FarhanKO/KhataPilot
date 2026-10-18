@@ -12,4 +12,3 @@ Every required submission item specified by the official competition rules is in
 | **05** | **Security Self-Assessment Report** | [SECURITY_ASSESSMENT.md](SECURITY_ASSESSMENT.md) | Permission tiers (0–3), Maker-Checker design, financial invariants, and 114/114 red-team tests. |
 | **06** | **Execution Evidence** | [../khatapilot/evidence/INDEX.md](../khatapilot/evidence/INDEX.md) | Sandbox operation logs, hash-chained audit logs, and scene-by-scene verification records. |
 ---
-## 📚 Complete Document Directory
