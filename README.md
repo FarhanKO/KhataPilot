@@ -227,7 +227,3 @@ _BSc in Botany, Government Titumir College, Bangladesh_
 3. Requirements Definition
 4. Feature Planning
 5. Product Direction
-
-## Licence
-
-KhataPilot is MIT licensed, see [LICENSE](LICENSE).
