@@ -25,7 +25,7 @@ Entry for the 2026 Shenzhen International FinTech Competition, International Tra
 
 Beside the chat, a **live decision trace** shows every action the AI proposed: who asked, the tier, each guard check and the decision with its reason.
 
-## Screenshots
+## Pages
 
 | | |
 |---|---|
