@@ -4,8 +4,10 @@
 
 Entry for the 2026 Shenzhen International FinTech Competition, International Track, Topic E (SME Finance Copilot).
 
-> **Demo video:** *link to be added* · **Deck:** *link to be added*
-> All money movement happens in a **simulated sandbox**. All shop data is **synthetic**.
+**Demo video:** *[docs/PRESENTATION_DECK.pdf](docs/PRESENTATION_DECK.pdf)* 
+**Deck:** *[Watch on YouTube](https://youtu.be/zHvan_q9Mv8)*
+
+> All money movement happens in a **simulated sandbox**.
 
 ![KhataPilot: the chat with today's numbers, and the live decision trace on the right](docs/img/Chat.png)
 
