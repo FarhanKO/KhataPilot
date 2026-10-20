@@ -5,7 +5,7 @@
 Entry for the 2026 Shenzhen International FinTech Competition, International Track, Topic E (Direction E: Small-business Finance Assistant).
 
 **Demo video:** *[Watch on YouTube](https://youtu.be/zHvan_q9Mv8)* •
-**Deck:** *[PRESENTATION_DECK](docs/PRESENTATION_DECK.pdf)* 
+**Presentation Deck:** *[PRESENTATION_DECK](docs/PRESENTATION_DECK.pdf)* 
 
 > All money movement happens in a **simulated sandbox**.
 
