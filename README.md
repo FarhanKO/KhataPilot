@@ -2,10 +2,9 @@
 
 **An AI CFO for Bangladeshi micro-shops: it keeps the books, warns about cash gaps, keeps track of all the business and dues, pays suppliers safely within the owner's limits, and turns a paper *khata* into an explained credit profile and a matched loan application.** The LLM only proposes; a deterministic guard decides, and a simulated provider refuses anything the guard did not sign.
 
-Entry for the 2026 Shenzhen International FinTech Competition, International Track, Topic E (SME Finance Copilot).
+Entry for the 2026 Shenzhen International FinTech Competition, International Track, Topic E (Direction E: Small-business Finance Assistant).
 
 **Demo video:** *[Watch on YouTube](https://youtu.be/zHvan_q9Mv8)*
-.
 **Deck:** *[PRESENTATION_DECK](docs/PRESENTATION_DECK.pdf)* 
 
 > All money movement happens in a **simulated sandbox**.
@@ -76,7 +75,7 @@ docs/          technical document, security assessment, risk register, architect
 khatapilot/    all the code: backend/ (API, agent, guard, modules), sandbox/ (the simulated provider),
                frontend/ (the web app), data/ (synthetic data generator), redteam/, scripts/,
                evidence/ (logs and reports from the runs), Docker and Python project files
-LICENSE        MIT
+LICENSE        Proprietary / Competition Evaluation Only
 ```
 
 Every command below runs inside `khatapilot/`. File paths in the docs (such as `backend/app/guard/`) are relative to it.
