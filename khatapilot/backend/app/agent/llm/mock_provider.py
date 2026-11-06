@@ -41,6 +41,10 @@ WEEKDAYS = {"monday": 0, "mon": 0, "sombar": 0, "tuesday": 1, "tue": 1, "mongolb
             "budhbar": 2, "thursday": 3, "thu": 3, "brihospotibar": 3, "friday": 4, "fri": 4, "shukrobar": 4,
             "saturday": 5, "sat": 5, "shonibar": 5, "sunday": 6, "sun": 6, "robibar": 6}
 NAME = r"[A-Za-z][A-Za-z&.'\-]*(?:\s+[A-Za-z][A-Za-z&.'\-]*){0,3}"
+# "Jamal ke baki 500" and "Jamal ke 450 taka baki": the customer who took goods on credit.
+BAKI_TO = re.compile(rf"(?P<n>{NAME})\s+(?:ke|k)\s+(?:.*?\s)?(?:baki|bakite|udhar)\b", re.I)
+# "Jamal ke 450 taka baki dilam" gives credit. "Rahim er baki 2000 dilam" settles a debt, so it does not match.
+BAKI_GIVEN = re.compile(rf"{BAKI_TO.pattern}\s+(?:dilam|diyechi|disi|dichi)\b", re.I)
 
 
 # ---------------------------------------------------------------- small parsers
@@ -194,13 +198,13 @@ def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
         item = m.group(0)
 
     # Record a sale
-    if amount and re.search(r"\b(sold|sell|sale|bikri|bechi|becha|beche|bechlam)\b", low):
+    if amount and (re.search(r"\b(sold|sell|sale|bikri|bechi|becha|beche|bechlam)\b", low) or BAKI_GIVEN.search(t)):
         on_credit = re.search(r"\b(baki|bakite|credit|udhar|due)\b", low)
         if on_credit:
             who = None
             if m := re.search(rf"\bto\s+(?P<n>{NAME})", t):
                 who = m.group("n")
-            elif m := re.search(rf"(?P<n>{NAME})\s+(?:ke|k)\s+baki", t, re.I):
+            elif m := BAKI_TO.search(t):
                 who = m.group("n")
             return [call("add_ledger_entry", kind="baki_sale", amount_taka=amount, method="credit",
                          counterparty_name=clip_name(who), item=item)]
