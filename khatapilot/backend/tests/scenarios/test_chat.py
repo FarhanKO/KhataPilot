@@ -10,6 +10,13 @@ def test_record_a_sale_from_typed_text(app):
     assert app.audit("execution")[-1]["decision"] == "RECORDED"
 
 
+def test_the_baki_suggestion_on_the_chat_page_records_credit_given(app):
+    out = app.chat("Jamal ke 450 taka baki dilam")
+    assert "Recorded baki sale ৳450" in out["reply"]
+    assert "They now owe ৳450" in out["reply"]
+    assert "out ৳0" in out["reply"], "credit given moves no money"
+
+
 def test_record_a_forwarded_bkash_sms(app):
     sms = app.http.post("/api/sim/incoming-payment", json={"from_number": "01755667788", "amount_taka": 1200}).json()
     out = app.chat("please record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
