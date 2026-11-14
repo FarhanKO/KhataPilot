@@ -3,14 +3,19 @@
   Start KhataPilot locally: the sandbox (port 8100), the backend (8000) and the frontend (5173),
   each in its own PowerShell window.
 
+  The web app is built and served compressed (fast on a phone). -DevUi runs Vite's dev server instead, with
+  instant reload while you change the UI; it is about ten times slower to open on a cheap phone.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\dev.ps1          # start everything
   powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 -Seed    # reset and load the demo shop first
+  powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 -DevUi   # the UI with instant reload, for UI work
   powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 -NoFrontend
 #>
 param(
     [switch]$Seed,
-    [switch]$NoFrontend
+    [switch]$NoFrontend,
+    [switch]$DevUi
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,7 +71,11 @@ if (-not $NoFrontend -and (Test-Path (Join-Path $Root "frontend\package.json")))
         npm install
         Pop-Location
     }
-    Start-InWindow "KhataPilot frontend :5173" "Set-Location frontend; npm run dev"
+    if ($DevUi) {
+        Start-InWindow "KhataPilot frontend :5173 (dev)" "Set-Location frontend; npm run dev"
+    } else {
+        Start-InWindow "KhataPilot frontend :5173" "Set-Location frontend; npm run serve"
+    }
 }
 
 Write-Host ""

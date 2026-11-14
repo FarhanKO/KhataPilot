@@ -20,7 +20,10 @@ export default defineConfig(({ mode }) => {
   };
   return {
     plugins: [react(), tailwindcss()],
+    // `npm run serve` (what dev.ps1 and docker-compose run) builds the app and serves the built files here,
+    // compressed: about 150 KB of JavaScript for a phone instead of the dev server's 4 MB of separate modules.
+    // `npm run dev` is for working on the UI (instant reload); both use the same address.
     server: { port: 5173, strictPort: true, proxy },
-    preview: { port: 4173, proxy },
+    preview: { port: 5173, strictPort: true, proxy },
   };
 });

@@ -66,8 +66,12 @@ export const TIER_NAMES: Record<number, string> = {
 export function maskNumber(number: string | null | undefined): string {
   if (!number) return "";
   const digits = number.replace(/\D/g, "");
-  const mobile = digits.match(/^(?:880)?(01\d{9})$/);
-  if (mobile) return `${mobile[1].slice(0, 3)}XXXX${mobile[1].slice(-4)}`;
+  // 017..., 88017... or +880 17... (the international form drops the leading 0)
+  const mobile = digits.match(/^(?:88)?0?(1\d{9})$/);
+  if (mobile) {
+    const local = `0${mobile[1]}`;
+    return `${local.slice(0, 3)}XXXX${local.slice(-4)}`;
+  }
   return `****${digits.slice(-4)}`;
 }
 

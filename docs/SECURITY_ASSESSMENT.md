@@ -8,10 +8,10 @@ This report covers the permission tiers and where each rule is enforced, the mak
 
 | Measure | Result | Source |
 |---|---|---|
-| Attacks stopped, model already fooled (mock mode) | **<!--n:redteam.stopped-->114<!--/n--> of <!--n:redteam.attacks-->114<!--/n--> (<!--n:redteam.block_rate-->100.0%<!--/n-->)** in <!--n:redteam.categories-->18<!--/n--> categories: <!--n:redteam.refused-->101<!--/n--> refused, <!--n:redteam.held-->13<!--/n--> held for the PIN as designed | [evidence/redteam_report.md](../khatapilot/evidence/redteam_report.md) |
+| Attacks stopped, model already fooled (mock mode) | **<!--n:redteam.stopped-->115<!--/n--> of <!--n:redteam.attacks-->115<!--/n--> (<!--n:redteam.block_rate-->100.0%<!--/n-->)** in <!--n:redteam.categories-->18<!--/n--> categories: <!--n:redteam.refused-->101<!--/n--> refused, <!--n:redteam.held-->14<!--/n--> held for the PIN as designed | [evidence/redteam_report.md](../khatapilot/evidence/redteam_report.md) |
 | Genuine requests that look like attacks, done as asked | **<!--n:redteam.benign_passed-->42<!--/n--> of <!--n:redteam.benign-->42<!--/n-->** (false-alarm rate <!--n:redteam.false_alarm_rate-->0.0%<!--/n-->) | same |
 | Live sample with the real model (<!--n:live.redteam.model-->claude-sonnet-5-5<!--/n-->) | <!--n:live.redteam.stopped-->54<!--/n--> of <!--n:live.redteam.attacks-->54<!--/n--> attacks stopped (<!--n:live.redteam.block_rate-->100.0%<!--/n-->), <!--n:live.redteam.benign_passed-->18<!--/n--> of <!--n:live.redteam.benign-->18<!--/n--> genuine requests done (false alarms <!--n:live.redteam.false_alarm_rate-->0.0%<!--/n-->) | [evidence/redteam_report_anthropic.md](../khatapilot/evidence/redteam_report_anthropic.md) |
-| Automated tests (mock mode, no key, no network) | <!--n:tests.passed-->588<!--/n--> of <!--n:tests.total-->588<!--/n--> pass | [evidence/test_report.md](../khatapilot/evidence/test_report.md) |
+| Automated tests (mock mode, no key, no network) | <!--n:tests.passed-->907<!--/n--> of <!--n:tests.total-->907<!--/n--> pass | [evidence/test_report.md](../khatapilot/evidence/test_report.md) |
 | Scripted demo, every step checked | <!--n:demo.passed-->16<!--/n--> of <!--n:demo.steps-->16<!--/n--> (mock), <!--n:live.demo.passed-->15<!--/n--> of <!--n:live.demo.steps-->15<!--/n--> (live) | [evidence/demo_run.md](../khatapilot/evidence/demo_run.md), [evidence/live/demo_run.md](../khatapilot/evidence/live/demo_run.md) |
 | Fraud Sentinel on held-out payments | <!--n:fraud.recall-->77%<!--/n--> of fraud caught at <!--n:fraud.far-->1.1%<!--/n--> false alarms (rules alone: <!--n:fraud.rules_recall-->43%<!--/n-->) | [docs/results/fraud_sentinel.md](results/fraud_sentinel.md) |
 
@@ -42,7 +42,7 @@ The tier comes from the action's base tier, raised by any check that escalates; 
 | 0 | Read only | Reading books, balances, forecasts, the credit profile; ledger entries from the owner's own words | `guard/tiers.py::BASE_TIER`; ledger amounts must appear in the owner's message or come from a forwarded SMS the provider confirms (`guard/checks.py::grounded`, `guard/tools.py::record_sms`) |
 | 1 | Suggest | Loan applications, baki reminders to customers | `guard/tiers.py::BASE_TIER`, held by `guard/approvals.py::ApprovalService` until the owner taps Approve; the stored action is hashed when shown and re-hashed on approval |
 | 2 | Act within limits | Payments to a trusted payee, within the per-payment limit and daily cap, owner intent matched, low fraud score | Passes every check in `guard/checks.py::PIPELINE`; executed through `guard/executor.py` with a guard-signed token |
-| 3 | Never alone | New payee; known name at a new number; over a limit; split or unusual pace; medium fraud score; forwarded content that tried to give orders; an ambiguous amount | `guard/checks.py::payee`, `limits`, `velocity`, `fraud`, `hidden_instructions`, `intent` return ESCALATE with tier 3; the owner confirms and enters the PIN (`guard/approvals.py::ApprovalService.approve`, `guard/pin.py::PinManager.verify`) |
+| 3 | Never alone | New payee; known name at a new number; over a limit; split or unusual pace; medium fraud score (including a known payee paid five times their usual amount or more); forwarded content that tried to give orders; an ambiguous amount | `guard/checks.py::payee`, `limits`, `velocity`, `fraud`, `hidden_instructions`, `intent` return ESCALATE with tier 3; the owner confirms and enters the PIN (`guard/approvals.py::ApprovalService.approve`, `guard/pin.py::PinManager.verify`) |
 | Blocked | Refused | A money action started by anyone but the owner; STOP on; PIN locked; no matching owner instruction; a payee number taken from forwarded text; a blocklisted number; a high fraud score | `guard/checks.py::provenance`, `kill_switch`, `pin_lock`, `intent`, `hidden_instructions`, `payee`, `fraud` return BLOCK; the owner is alerted and the attempt is logged (`guard/gateway.py::ToolGateway.submit`) |
 
 **Owner-only actions are not tools.** Changing limits, the trusted-payee list or the PIN, and turning STOP off live in `guard/owner_controls.py::OwnerControls` and are reachable only from the interface layer's PIN-protected routes (`interface/api/owner.py`). An architecture test fails the build if anything else imports that module (`backend/tests/architecture/test_layers.py`). Consent for the credit profile is given and withdrawn the same way (`interface/api/credit.py`).
@@ -67,7 +67,7 @@ Each control lists what it does, where it lives and what proves it works.
 
 **Limits, velocity and splitting.** Defaults ৳10,000 per payment and ৳25,000 a day, changeable only by the owner with the PIN (`guard/checks.py::limits`). Payments to the same payee, or to new payees, in the last 24 hours that together pass the per-payment limit are escalated as a possible split; so is an unusual number of payments in an hour (`guard/checks.py::velocity`). The daily cap counts both paid and scheduled payments (`modules/payments/service.py::committed_for_day`).
 
-**Fraud Sentinel.** Every proposed payment gets a score from an Isolation Forest (structural anomalies, trained on normal payments) followed by a calibrated LightGBM classifier (known scam patterns), with stricter thresholds above two days of sales (`modules/risk/sentinel.py`). 0.50 escalates to the PIN; 0.85 blocks (`guard/checks.py::fraud`). The model file is loaded only if its SHA-256 matches the sidecar written at training time; anything else, or an exception while scoring, falls back to a transparent rule-based score and never fails open (`modules/risk/service.py`). On held-out payments it catches <!--n:fraud.recall-->77%<!--/n--> of fraud at <!--n:fraud.far-->1.1%<!--/n--> false alarms and cuts the banking risk cost by <!--n:fraud.cost_cut-->54%<!--/n--> against the rules. Its blind spot, small fee scams (<!--n:fraud.scam_small-->0%<!--/n--> flagged), is covered by the payee rule.
+**Fraud Sentinel.** Every proposed payment gets a score from an Isolation Forest (structural anomalies, trained on normal payments) followed by a calibrated LightGBM classifier (known scam patterns), with stricter thresholds above two days of sales (`modules/risk/sentinel.py`). 0.50 escalates to the PIN; 0.85 blocks (`guard/checks.py::fraud`). The model file is loaded only if its SHA-256 matches the sidecar written at training time; anything else, or an exception while scoring, falls back to a transparent rule-based score and never fails open (`modules/risk/service.py`). On held-out payments it catches <!--n:fraud.recall-->77%<!--/n--> of fraud at <!--n:fraud.far-->1.1%<!--/n--> false alarms and cuts the banking risk cost by <!--n:fraud.cost_cut-->54%<!--/n--> against the rules. Its blind spot, small fee scams (<!--n:fraud.scam_small-->0%<!--/n--> flagged), is covered by the payee rule. A second blind spot, found on 14 Nov, is a well-known payee suddenly paid many times their usual amount (an extra zero, a "send the advance now" call): the simulated data has none, and the model scored a trusted payee at 10× as 0.000. A fixed floor now covers it: three or more past payments and at least five times the usual amount (and at least ৳1,000) scores at least 0.6 in the model and in the rules fallback, so the payment needs the PIN, with the ratio as the reason (`modules/risk/features.py::unusual_for_payee`, tested in `tests/unit/test_fraud_sentinel.py` and `tests/unit/test_policy_engine.py::test_a_trusted_payee_paid_far_more_than_usual_needs_the_pin`). No simulated payment meets the floor, so the evaluation above is unchanged.
 
 **PIN.** Stored as an argon2id hash only; never shown, logged or passed through the model (`guard/pin.py::PinManager`). Weak PINs are refused (`validate_new_pin`); three wrong attempts lock money actions for 15 minutes. A bare 4–6 digit chat message, or one that names a PIN next to a number, is answered by the interface and stored with the number removed; the model never sees it (`interface/api/chat.py::redact_pin_mentions`). *Proof:* the PIN-fishing category checks for the PIN in every response, the chat history, the audit log, the trace and the provider log.
 
@@ -76,6 +76,55 @@ Each control lists what it does, where it lives and what proves it works.
 **Capability tokens and provider-side verification.** For every side effect the guard mints an `AuthorizedAction`: an HMAC-SHA256 signature over the action kind, a SHA-256 of exactly the fields that move money (account, payee, amount, method), the idempotency key, tier, decision id, nonce and a 5-minute expiry (`guard/capability.py::CapabilitySigner.mint`). Only this module reads the signing key (architecture test). The payments module re-hashes what it is about to send (`modules/payments/service.py::execute`), and the provider verifies signature, expiry and hash against the body it received (`sandbox/auth.py`). *Proof:* the guard-bypass category (missing, forged, expired and altered tokens, a token reused for another amount, admin calls without the admin key).
 
 **Idempotency.** Every payment carries an idempotency key; the provider stores it with the token and returns the original transaction for a retry (`sandbox/app.py::run_authorized`). A double approval pays once.
+
+**Held actions re-checked on approval.** What the owner approves may have been prepared up to 30 minutes
+earlier, so on approval the guard checks again what can change meanwhile: the payee's number put on the
+block list, the same payment (number and amount) already made since it was held (two taps, or the same
+request asked twice), and, for a savings transfer worked out by the plan, whether this month's savings
+already moved or cash no longer allows the amount. Any of these refuses and closes the held action
+(`guard/rechecks.py`, called from `guard/approvals.py::approve`).
+
+**Rate limits and HTTP hardening.** Every API request passes `interface/http_guards.py`: per-client limits
+per minute for the routes that take the PIN (20), chat (60) and the rest (600), with STOP never limited;
+`nosniff`, `DENY` framing, no referrer, a CSP that allows nothing, `no-store` caching and HSTS over HTTPS;
+a request ID on every response, log line and error; and a plain error with that ID instead of a stack trace.
+
+**One scheduler, alerts once.** Only the process holding the scheduler lease runs due payments and the
+daily checks, so two backend workers on one database never pay twice; each daily alert is recorded under
+a key (for example the month for savings) with an atomic insert, so it is sent once whatever runs it
+(`infra/job_state.py`).
+
+**Books matched against the provider daily.** Each account's balance in the books is compared with the
+provider's, every payment KhataPilot made in the last week must be on the provider's statement, and a
+payment still "executing" after 15 minutes is flagged; a mismatch is told to the owner once a day with
+the TrxIDs the books lack (`modules/payments/service.py::match_provider`, `interface/jobs.py::check_provider`).
+A provider that cannot be reached at all is reported as "not checked", never as a match.
+
+**A monthly cap on AI spend.** Every call to a paid model is metered for the shop's calendar month
+(`infra/llm_meter.py`); at 80% and at 100% of `LLM_MONTHLY_BUDGET_USD` the owner is alerted once, and
+once it is spent the offline planner answers every message until the month ends, invoices included
+(`interface/llm_budget.py`, `agent/orchestrator.py`). A stolen owner token or a runaway loop can cost
+at most one month's budget. Alerts shows the month's use in taka.
+
+**Customers can stop reminders.** Every reminder says "Reply STOP". A customer's whole-message STOP
+(or "no more SMS", "bondho", "বন্ধ") is recorded without the model; that customer is left out when
+reminders are prepared, again when the owner approves them, and the send itself refuses. Only the
+customer can lift their own STOP by replying START; the owner can stop one customer, and lift only
+what they stopped (`modules/reminders/service.py`, `interface/api/chat.py::_reminder_reply`).
+
+**Backups that are proven to restore.** `scripts/backup.py` copies both databases with SQLite's online
+backup API, keeps a copy only if it passes the integrity check and its audit chain verifies, and records
+row counts and checksums; `drill` restores the newest into a scratch folder and checks that the current
+code can read every table; `restore` first saves what is there now (`infra/backup.py`).
+
+**Monitoring without data.** `/api/metrics` gives request counts and latency, guard decisions, job runs,
+approvals waiting, STOP, AI spend, the audit chain's state and the newest backup's age, in Prometheus
+text, with no names, numbers or amounts; it needs `METRICS_TOKEN` or a request from the machine itself.
+
+**Reports for lenders without customers' data.** The lender statement holds the shop's own figures and
+counts only: no customer's name or number. It carries the provider match, the audit chain's head and a
+fingerprint of its figures that the same books reproduce; making it is recorded in the audit log, and
+nothing is sent: the owner prints it (`modules/reports/service.py`, `interface/api/reports.py`).
 
 **Scheduled payments re-checked on the day.** The scheduler re-checks STOP, the blocklist, the trusted payee and the daily cap when a scheduled payment falls due, and mints a fresh token; anything that changed holds the payment and alerts the owner (`guard/scheduler.py::PaymentScheduler.recheck`).
 
@@ -103,13 +152,24 @@ Each control lists what it does, where it lives and what proves it works.
 | Every ledger amount comes from the owner's own words or an SMS the provider confirms | `guard/checks.py::grounded`, `guard/tools.py::record_sms` | `backend/tests/unit/test_bookkeeping_tools.py` (`test_typed_entries_must_use_the_owners_amount`, `test_an_sms_the_provider_never_saw_is_not_booked`, `test_an_sms_whose_amount_was_changed_is_not_booked`) |
 | A message to a customer is written from the books and a fixed template; the model chooses neither the recipient nor the words | `modules/reminders/service.py::plan`, `guard/tools.py` (strict `ReminderArgs`) | `backend/tests/unit/test_reminders.py` (`test_the_model_cannot_write_the_text_or_choose_the_number`, `test_forwarded_orders_raise_reminders_to_the_pin`) |
 | A scheduled payment is re-checked on its day | `guard/scheduler.py` | `test_guard_flows.py::test_a_scheduled_payment_is_held_if_the_payee_is_no_longer_trusted` |
+| A customer who replied STOP gets no reminder, even one already waiting for approval, and the owner cannot lift their STOP | `modules/reminders/service.py`, `guard/executor.py::send_reminders` | `scenarios/test_reminder_opt_out.py` (`test_a_stop_while_reminders_wait_for_approval_is_honoured`, `test_only_the_customer_can_undo_their_own_stop`) |
+| Once the month's AI budget is spent the model is not called again that month | `interface/llm_budget.py`, `agent/orchestrator.py` | `scenarios/test_llm_budget.py::test_the_budget_is_metered_warned_and_then_capped` |
+| A savings goal's amount is the owner's own or worked out by code, never the model's | `guard/checks.py::grounded` | `scenarios/test_savings_goals.py::test_a_goal_amount_the_owner_never_typed_is_refused` |
+| A lender report carries no customer's name | `modules/reports/service.py::lender` | `scenarios/test_reports.py::test_the_lender_statement_has_six_months_and_no_customer_names` |
+| A held payment is re-checked when approved: a newly blocked number, or the same payment already made, refuses it | `guard/rechecks.py` | `scenarios/test_approval_rechecks.py` (`test_the_same_payment_held_twice_is_paid_once`, `test_a_number_blocked_while_the_payment_waits_is_not_paid`, `test_two_taps_on_move_to_savings_save_once`) |
+| Savings go only to the account saved with the PIN, and every transfer needs the PIN | `guard/checks.py::payee`, `guard/checks.py::savings` | `scenarios/test_savings.py::test_savings_amounts_and_accounts_cannot_come_from_anyone_but_the_owner` |
+| A payment SMS from an ordinary mobile number is never booked, and the owner is alerted | `interface/phone.py` | `scenarios/test_phone_sms.py::test_a_fake_bkash_sms_from_a_personal_number_is_never_booked` |
+| An SMS from the phone is booked only with a valid phone signature, once, and above the review amount only after the owner checks it | `infra/phone_gateway.py::verify_webhook`, `guard/tools.py::record_sms`, `guard/checks.py::grounded` | `scenarios/test_phone_sms.py` (`test_an_unsigned_or_wrongly_signed_delivery_is_refused`, `test_a_real_bkash_sms_from_the_phone_is_booked_once`, `test_with_sender_id_trust_a_small_unconfirmed_sms_is_booked_and_a_large_one_waits`) |
+| An SMS leaving the owner's phone is exactly the text the guard signed | `modules/reminders/service.py::send`, `guard/owner_sms.py` | `scenarios/test_phone_sms.py` (`test_approved_reminders_also_leave_from_the_owners_phone`, `test_urgent_alerts_are_texted_to_the_owner_once`) |
+| The owner can only take customers out of held reminders, never add or change one | `guard/approvals.py::remove_reminder` | `unit/test_reminders.py` (`test_the_owner_can_take_one_customer_out_before_approving`, `test_removing_can_only_narrow_never_add`) |
+| The advisor's words never carry a number that is not in the books' facts, nor a payment order | `agent/advisor.py::grounded` | `scenarios/test_advice.py::test_a_tip_may_only_use_numbers_from_the_facts_and_never_orders_a_payment` |
 | Every decision is logged, and editing or deleting an entry breaks the chain | `infra/audit_log.py` | `backend/tests/unit/test_audit_log.py` (`test_update_and_delete_are_refused_by_the_database`, `test_a_modified_entry_breaks_the_chain`, `test_a_deleted_entry_breaks_the_chain`) |
 
 ## 5. Red-team results
 
 **Method.** `redteam/` attacks the whole system, not the guard in isolation. Each case runs in its own fresh world: the real backend and the real provider in-process, the demo shop seeded, random secrets and PIN, and the shop's accounts funded far beyond any attack, so a guard failure would show up as real money moving. Attacks come in through the real doors: the owner's chat with forwarded SMS or invoice text, the inbound channel, the owner API and the provider API. In mock mode the model is deliberately gullible, and a case can also make it *fooled* (the attacker's tool calls are added to its own) or *compromised* (it proposes only the attacker's calls). An attack counts as stopped only if every step ended at least as safely as designed **and** no invariant broke, checked from outside: no money left the shop except what the owner asked for; no limit, payee, consent or STOP state changed; nothing reached a lender or a third party; the PIN appears nowhere in anything KhataPilot said or stored; and a stranger's message read or changed no shop data. A genuine request passes only if it ended exactly as designed; anything stricter is a false alarm. Every case is also a pytest test, run in CI on every push.
 
-**Mock mode (the model has already fallen for every attack).** <!--n:redteam.stopped-->114<!--/n--> of <!--n:redteam.attacks-->114<!--/n--> attacks stopped, <!--n:redteam.missed-->0<!--/n--> missed; <!--n:redteam.benign_passed-->42<!--/n--> of <!--n:redteam.benign-->42<!--/n--> genuine requests done as asked. The live column is a sample of 3 attacks per category, run against the real model.
+**Mock mode (the model has already fallen for every attack).** <!--n:redteam.stopped-->115<!--/n--> of <!--n:redteam.attacks-->115<!--/n--> attacks stopped, <!--n:redteam.missed-->0<!--/n--> missed; <!--n:redteam.benign_passed-->42<!--/n--> of <!--n:redteam.benign-->42<!--/n--> genuine requests done as asked. The live column is a sample of 3 attacks per category, run against the real model.
 
 <!--t:redteam.by_category-->
 | Category | Attacks | Stopped (mock, model fooled) | Refused | Held for PIN | Live sample: stopped |
@@ -126,7 +186,7 @@ Each control lists what it does, where it lives and what proves it works.
 | Amount, date and payee tampering | 6 | 6 | 5 | 1 | 3 of 3 |
 | Payee spoofing | 5 | 5 | 1 | 4 | 3 of 3 |
 | Payment splitting and caps | 5 | 5 | 1 | 4 | 3 of 3 |
-| Changing limits or payees | 7 | 7 | 7 | 0 | 3 of 3 |
+| Changing limits or payees | 8 | 8 | 7 | 1 | 3 of 3 |
 | Kill-switch bypass | 8 | 8 | 8 | 0 | 3 of 3 |
 | PIN fishing | 7 | 7 | 7 | 0 | 3 of 3 |
 | Data exfiltration | 7 | 7 | 7 | 0 | 3 of 3 |
@@ -139,16 +199,17 @@ Each control lists what it does, where it lives and what proves it works.
 <!--t:redteam.first_layer-->
 | Layer and check | Attacks |
 |---|---:|
-| guard: provenance | 29 |
+| guard: provenance | 30 |
 | guard: hidden_instructions | 18 |
-| tool gateway | 14 |
+| tool gateway | 13 |
 | guard: intent | 11 |
 | guard: payee | 8 |
-| agent: nothing attempted (no tool can do it) | 5 |
 | owner API: HTTP 401 | 4 |
+| agent: nothing attempted (no tool can do it) | 4 |
 | owner API: PIN | 3 |
 | guard: limits | 2 |
 | guard: velocity | 2 |
+| guard: owner_settings | 2 |
 | approval: refused | 2 |
 | interface | 2 |
 | guard: grounded | 2 |
@@ -190,7 +251,7 @@ Each control lists what it does, where it lives and what proves it works.
 | LLM03 Supply chain | Python packages, the LLM provider, the fraud model file, fonts | Exact versions pinned in `requirements.txt` with every licence listed in the README; the fraud model is hash-checked on load and falls back to rules; three provider modes; fonts bundled, nothing loaded from a CDN | `backend/tests/unit/test_fraud_sentinel.py::test_save_and_load_check_integrity` | R18, R23 |
 | LLM04 Data and model poisoning | The fraud and credit models | Trained offline only, on synthetic data generated in-repo from a seed; nothing is learned from live chat; the model file is integrity-checked | The same integrity test; `scripts/train_credit.py` and `scripts/train_models.py` reproduce the models | R17, R23 |
 | LLM05 Improper output handling | Model output becomes tool arguments | Strict schemas; unknown tools and extra arguments are refused; the guard re-normalises every value and fills the payee number from the saved list; messages to customers come from a fixed template; nothing is run as code | `test_policy_engine.py::test_unknown_tools_and_smuggled_arguments_are_rejected`, `test_llm_providers.py::test_broken_json_arguments_reach_the_guard_as_invalid`, `test_reminders.py::test_the_model_cannot_write_the_text_or_choose_the_number`; red team: tool-argument injection | R3 |
-| LLM06 Excessive agency | An agent that could move money | The agent reaches only `app.guard.api`; tiers; maker-checker (§3); owner controls are not tools; the provider verifies every signed token; the daily cash and baki checks only alert the owner | `backend/tests/architecture/test_layers.py` (`test_agent_only_reaches_the_guard_api`, `test_only_the_guard_mints_authorized_actions`); red team: changing limits or payees, kill-switch bypass, skipping the guard | R4, R5 |
+| LLM06 Excessive agency | An agent that could move money | The agent reaches only `app.guard.api`; tiers; maker-checker (§3); limit, payee and block-list changes from chat are only proposals held for the owner (PIN for limits and payees), grounded in the owner's own words, and the PIN itself is never a tool; the provider verifies every signed token; the daily cash and baki checks only alert the owner | `backend/tests/architecture/test_layers.py` (`test_agent_only_reaches_the_guard_api`, `test_only_the_guard_mints_authorized_actions`); red team: changing limits or payees, kill-switch bypass, skipping the guard | R4, R5 |
 | LLM07 System prompt leakage | Someone asks the model for its instructions | The prompt holds no secrets, keys or PIN, and no control depends on it staying secret | `test_layers.py::test_only_the_capability_signer_touches_the_signing_key` (the key is out of the agent's reach) | R22 |
 | LLM08 Vector and embedding weaknesses | Not applicable: there is no vector store, embedding or retrieval | — | — | — |
 | LLM09 Misinformation | A wrong number, forecast or piece of loan advice | Numbers about money and the books come from code, not the model; the forecast and the credit profile show their reasons; both are validated, on synthetic shops | `docs/results/` (forecast backtest, out-of-fold credit results); the scripted demo checks the money and the books at every step | R13, R25, R26 |

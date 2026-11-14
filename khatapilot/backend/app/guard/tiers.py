@@ -15,7 +15,12 @@ BASE_TIER: dict[ActionKind, int] = {
     ActionKind.MESSAGE: 1,
     ActionKind.LOAN_SUBMIT: 1,
     ActionKind.PAYMENT: 2,
+    ActionKind.CONTROL_BLOCK: 1,
+    ActionKind.CONTROL_CHANGE: 3,
 }
+
+# Changes to the owner's own safety settings, proposed in chat and applied only after the owner confirms.
+CONTROL_KINDS = {ActionKind.CONTROL_BLOCK, ActionKind.CONTROL_CHANGE}
 
 OUTCOME_FOR_TIER: dict[int, Outcome] = {
     0: Outcome.ALLOW,

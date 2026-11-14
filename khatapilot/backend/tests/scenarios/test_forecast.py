@@ -66,9 +66,30 @@ def test_with_consent_the_cash_alert_names_the_loan_and_the_owner_can_apply(app)
 def test_money_coming_in_moves_the_forecast(app):
     before = app.http.get("/api/forecast").json()
     sms = app.http.post("/api/sim/incoming-payment", json={"from_number": SKYLINE, "amount_taka": 7448}).json()
-    app.chat("record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
+    app.chat("Skyline paid their baki, record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
     after = app.http.get("/api/forecast").json()
     assert after["start_balance_paisa"] == before["start_balance_paisa"] + 7_448_00
     # Tuesday is covered now; the next tight day is Rahim Traders' bill on Saturday 24 Oct.
     assert after["first_shortfall"]["day"] == "2026-10-24"
     assert after["lowest_balance_paisa"] > before["lowest_balance_paisa"]
+
+
+def test_the_buffer_is_sized_from_the_shop_and_the_owner_can_change_it_in_chat(app):
+    forecast = app.http.get("/api/forecast").json()
+    buffer = forecast["buffer"]
+    assert buffer["mode"] == "auto" and buffer["amount_paisa"] == forecast["buffer_paisa"]
+    assert buffer["daily_in_paisa"] > 10_000_00 and 0 < buffer["swing_ratio"] < 0.5
+    assert any(m.startswith("Safety buffer") for m in forecast["method"])
+
+    asked = app.chat("why is my safety buffer this amount?")
+    assert "comes in on a usual day" in asked["reply"]
+
+    out = app.chat("keep my buffer at 10,000")
+    assert "your safety buffer is now ৳10,000" in out["reply"]
+    raised = app.http.get("/api/forecast").json()
+    assert raised["buffer"]["mode"] == "owner" and raised["buffer_paisa"] == 10_000_00
+    assert raised["buffer"]["auto_paisa"] == buffer["amount_paisa"]
+    assert raised["first_shortfall"]["day"] < forecast["first_shortfall"]["day"], "a bigger buffer warns sooner"
+
+    app.chat("use the automatic buffer")
+    assert app.http.get("/api/forecast").json()["buffer"] == buffer

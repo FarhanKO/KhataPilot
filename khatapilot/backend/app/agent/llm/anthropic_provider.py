@@ -20,18 +20,33 @@ from typing import Any
 
 import anthropic
 
-from app.agent.llm.types import HistoryMessage, LLMError, LLMStep, LLMTool, LLMToolCall, ToolResult, TurnBrief
+from app.agent.llm.types import (
+    HistoryMessage,
+    LLMError,
+    LLMStep,
+    LLMTool,
+    LLMToolCall,
+    ToolResult,
+    TurnBrief,
+    UsageListener,
+    report_usage,
+)
 
 MAX_TOKENS = 16_000
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 FALLBACK_MODELS = {"claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1"}
 
-# List prices in US$ per million tokens (input, output), used only to report what a live run cost.
-# Cache writes cost 1.25x input and cache reads 0.1x input.
+# List prices in US$ per million tokens (input, output, cache read), for the shop's monthly AI budget and
+# cost reports. Cache writes cost 1.25x input. The server-side refusal fallback can answer on an older
+# model, so those are priced too.
 PRICES = {
-    "claude-sonnet-5-5": (2.00, 10.00),
-    "claude-opus-5-5": (4.00, 20.00),
-    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.10),
+    "claude-opus-5-5": (4.00, 20.00, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01),
+    "claude-sonnet-5": (2.00, 10.00, 0.20),
+    "claude-opus-5": (5.00, 25.00, 0.50),
+    "claude-opus-4-8": (5.00, 25.00, 0.50),
+    "claude-fable-5-1": (10.00, 50.00, 1.00),
 }
 USAGE_FIELDS = ("calls", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 
@@ -41,10 +56,10 @@ def estimate_cost(model: str, usage: dict[str, int]) -> float | None:
     price = PRICES.get(model)
     if price is None:
         return None
-    per_in, per_out = price[0] / 1e6, price[1] / 1e6
+    per_in, per_out, per_read = (p / 1e6 for p in price)
     return (usage.get("input_tokens", 0) * per_in + usage.get("output_tokens", 0) * per_out
             + usage.get("cache_creation_input_tokens", 0) * per_in * 1.25
-            + usage.get("cache_read_input_tokens", 0) * per_in * 0.1)
+            + usage.get("cache_read_input_tokens", 0) * per_read)
 
 
 class AnthropicProvider:
@@ -56,6 +71,7 @@ class AnthropicProvider:
         self.effort = effort
         self.fallbacks = fallbacks and model in FALLBACK_MODELS
         self.usage = dict.fromkeys(USAGE_FIELDS, 0)  # running totals for this provider, for cost reports
+        self.on_usage: UsageListener | None = None  # each call's usage, for the shop's monthly meter
         if client is not None:
             self.client = client
         elif api_key:
@@ -73,9 +89,13 @@ class AnthropicProvider:
         try:
             response = self.client.beta.messages.create(**request)
             self.usage["calls"] += 1
+            call = {}
             for name in USAGE_FIELDS[1:]:
                 value = getattr(getattr(response, "usage", None), name, 0)
-                self.usage[name] += value if isinstance(value, int) else 0
+                call[name] = value if isinstance(value, int) else 0
+                self.usage[name] += call[name]
+            answered_by = getattr(response, "model", None)
+            report_usage(self.on_usage, answered_by if isinstance(answered_by, str) else self.model, call)
             return response
         except anthropic.AuthenticationError as exc:
             raise LLMError("The AI service did not accept our API key. Check ANTHROPIC_API_KEY in .env.") from exc
@@ -84,13 +104,14 @@ class AnthropicProvider:
         except anthropic.NotFoundError as exc:
             raise LLMError(f"The model {self.model!r} was not found. Check LLM_MODEL in .env.") from exc
         except anthropic.RateLimitError as exc:
-            raise LLMError("The AI service is busy right now. Please try again in a minute.") from exc
+            raise LLMError("The AI service is busy right now. Please try again in a minute.", transient=True) from exc
         except anthropic.BadRequestError as exc:
             raise LLMError(f"The AI service rejected the request ({exc.message}).") from exc
         except (anthropic.APIConnectionError, anthropic.APITimeoutError) as exc:
-            raise LLMError("I could not reach the AI service. Check the internet connection.") from exc
+            raise LLMError("I could not reach the AI service. Check the internet connection.", transient=True) from exc
         except anthropic.APIStatusError as exc:
-            raise LLMError(f"The AI service had an error ({exc.status_code}). Please try again.") from exc
+            raise LLMError(f"The AI service had an error ({exc.status_code}). Please try again.",
+                           transient=exc.status_code >= 500) from exc
 
     def session(self, *, system: str, tools: list[LLMTool], history: list[HistoryMessage]) -> AnthropicSession:
         return AnthropicSession(self, system, tools, history)

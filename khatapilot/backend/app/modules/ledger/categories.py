@@ -23,6 +23,7 @@ DEFAULT_BY_KIND = {
     "sale": "Sales",
     "baki_sale": "Sales on credit (baki)",
     "baki_repayment": "Baki collected",
+    "baki_adjustment": "Baki correction",
     "purchase": "Stock purchases",
     "supplier_payment": "Stock purchases",
     "expense": "Transport & misc",
@@ -34,7 +35,7 @@ DEFAULT_BY_KIND = {
 
 def categorize(kind: str, *texts: str | None) -> str:
     """Sales stay "Sales"; purchases and expenses get a category from the item words."""
-    if kind in ("sale", "baki_sale", "baki_repayment", "owner_drawing"):
+    if kind in ("sale", "baki_sale", "baki_repayment", "baki_adjustment", "owner_drawing"):
         return DEFAULT_BY_KIND[kind]
     words = " ".join(t for t in texts if t).lower()
     for category, keys in KEYWORDS:

@@ -52,13 +52,13 @@ def _view(row: LoanApplicationRecord) -> LoanApplicationView:
 
 class LoansService:
     def __init__(self, session: Session, clock: Clock, shop_id: str, *, credit: CreditService,
-                 sandbox: SandboxClient | None, buffer_paisa: int) -> None:
+                 sandbox: SandboxClient | None, standard_buffer_paisa: int) -> None:
         self.session = session
         self.clock = clock
         self.shop_id = shop_id
         self.credit = credit
         self.sandbox = sandbox
-        self.buffer_paisa = buffer_paisa
+        self.standard_buffer_paisa = standard_buffer_paisa
         self._forecast: CashForecast | None = None
 
     def products(self) -> list[LoanProduct]:
@@ -69,7 +69,7 @@ class LoansService:
     def forecast(self) -> CashForecast:
         if self._forecast is None:
             self._forecast = ForecastService(self.session, self.clock, self.shop_id,
-                                             buffer_paisa=self.buffer_paisa).forecast()
+                                             standard_buffer_paisa=self.standard_buffer_paisa).forecast()
         return self._forecast
 
     def affordability(self) -> Affordability:
@@ -81,7 +81,7 @@ class LoansService:
         net = sum(b.sales_cash + b.sales_mobile + b.sales_baki - b.purchases - b.expenses for b in books)
         income = max(0, round(net / len(books) * 30 / 100) * 100)
         forecast = self.forecast()
-        gap = max(0, self.buffer_paisa - forecast.lowest_balance_paisa) if forecast.first_shortfall else 0
+        gap = max(0, forecast.buffer_paisa - forecast.lowest_balance_paisa) if forecast.first_shortfall else 0
         return Affordability(monthly_business_income_paisa=income,
                              max_instalment_paisa=int(income * matcher.DEBT_SERVICE_SHARE) // 100 * 100,
                              shortfall_gap_paisa=gap,

@@ -23,6 +23,12 @@ def normalize_msisdn(raw: str) -> str | None:
     return None
 
 
+def e164(number: str) -> str:
+    """+8801XXXXXXXXX for a Bangladeshi mobile number (what SMS gateways expect), else the number as given."""
+    local = normalize_msisdn(number)
+    return f"+88{local}" if local else number
+
+
 def find_phone_numbers(text: str) -> list[str]:
     numbers = []
     for match in PHONE_RE.finditer(normalize_digits(text)):

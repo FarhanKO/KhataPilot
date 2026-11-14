@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -13,10 +14,18 @@ from app.core.ids import new_id
 from app.core.money import fmt_taka
 from app.core.sms import ParsedSms
 from app.infra.sandbox_client import SandboxClient, SandboxError
-from app.modules.ledger.schemas import NewLedgerEntry
+from app.modules.ledger.schemas import SAVINGS_CATEGORY, NewLedgerEntry
 from app.modules.ledger.service import LedgerService
 from app.modules.payments.models import PaymentRecord
-from app.modules.payments.schemas import PAYMENT_KIND, ExecutionRefused, PaymentCommand, PaymentView, SmsCheck
+from app.modules.payments.schemas import (
+    PAYMENT_KIND,
+    AccountMatch,
+    ExecutionRefused,
+    PaymentCommand,
+    PaymentView,
+    ProviderMatch,
+    SmsCheck,
+)
 from app.modules.shop.service import ShopService
 
 
@@ -33,7 +42,7 @@ class PaymentsService:
 
     def create(self, *, payee_name: str | None, payee_number: str, method: str, amount_paisa: int,
                execute_on: date | None, decision_id: str, request_id: str, tier: int, with_pin: bool,
-               note: str | None = None) -> PaymentView:
+               note: str | None = None, purpose: str = "payment") -> PaymentView:
         today = local_date(self.clock.now())
         when = execute_on or today
         row = PaymentRecord(
@@ -41,7 +50,7 @@ class PaymentsService:
             method=method, amount_paisa=amount_paisa, execute_on=when,
             status="scheduled" if when > today else "executing", decision_id=decision_id,
             request_id=request_id, approved_tier=tier, approved_with_pin=with_pin,
-            idempotency_key=new_id("idem"), note=note, created_at=self.clock.now(),
+            idempotency_key=new_id("idem"), note=note, purpose=purpose, created_at=self.clock.now(),
         )
         self.session.add(row)
         self.session.flush()
@@ -89,7 +98,17 @@ class PaymentsService:
         return PaymentView.model_validate(row)
 
     def _book(self, row: PaymentRecord, result: dict) -> None:
-        """Record the money out in the books and settle the supplier's payable."""
+        """Record the money out in the books and settle the supplier's payable. Money moved to the owner's
+        savings is their own money leaving the shop: a withdrawal, not a cost, so it never lowers profit."""
+        if row.purpose == "savings":
+            self.ledger.add_entry(NewLedgerEntry(
+                shop_id=self.shop_id, occurred_at=self.clock.now(), kind="owner_drawing", direction="out",
+                method=row.method, amount_paisa=row.amount_paisa, category=SAVINGS_CATEGORY,
+                counterparty_name=row.payee_name, counterparty_number=row.payee_number,
+                note=row.note or "Monthly savings through KhataPilot", trx_id=result.get("transaction_id"),
+                source="sandbox", source_ref=row.id,
+            ))
+            return
         supplier = self.shops.find_party(self.shop_id, row.payee_name or "", kind="supplier") if row.payee_name else None
         self.ledger.add_entry(NewLedgerEntry(
             shop_id=self.shop_id,
@@ -119,24 +138,69 @@ class PaymentsService:
         account = {"bkash": shop.bkash_account, "nagad": shop.nagad_account, "bank": shop.bank_account}[sms.provider]
         name = {"bkash": "bKash", "nagad": "Nagad", "bank": "bank"}[sms.provider]
         if self.sandbox is None:
-            return SmsCheck(confirmed=False, reason=f"KhataPilot cannot reach {name} to check this SMS, so it was not "
-                                                    "recorded.")
+            return SmsCheck(confirmed=False, status="unreachable",
+                            reason=f"KhataPilot cannot reach {name} to check this SMS, so it was not recorded.")
         try:
             txn = self.sandbox.find_transaction(account, sms.trx_id)
         except SandboxError:
-            return SmsCheck(confirmed=False, reason=f"I couldn't check this SMS with {name} just now, so it was not "
-                                                    "recorded yet. Please try again in a minute.")
+            return SmsCheck(confirmed=False, status="unreachable",
+                            reason=f"I couldn't check this SMS with {name} just now, so it was not recorded yet. "
+                                   "Please try again in a minute.")
         if txn is None:
-            return SmsCheck(confirmed=False, reason=(
+            return SmsCheck(confirmed=False, status="unknown", reason=(
                 f"TrxID {sms.trx_id} is not in your {name} statement, so this SMS may be fake and nothing was recorded. "
                 f"Check your {name} app before you hand over goods or mark a debt as paid."))
         direction = "credit" if sms.direction == "in" else "debit"
         if txn["direction"] != direction or txn["amount_paisa"] != sms.amount_paisa:
             shown = "received" if txn["direction"] == "credit" else "sent"
-            return SmsCheck(confirmed=False, reason=(
+            return SmsCheck(confirmed=False, status="mismatch", reason=(
                 f"Your {name} statement shows TrxID {sms.trx_id} as {fmt_taka(txn['amount_paisa'])} {shown}, not what "
                 "this SMS says, so it may have been altered. Nothing was recorded."))
         return SmsCheck(confirmed=True, reason=f"Confirmed with {name}: TrxID {sms.trx_id}, {fmt_taka(sms.amount_paisa)}.")
+
+    # ---- the nightly match against the provider
+
+    def match_provider(self, *, lookback_days: int = 7) -> ProviderMatch:
+        """Compare each provider account's balance with the books, check every recent payment made through
+        KhataPilot is on the provider's statement, and find payments stuck half-way. Read-only."""
+        if self.sandbox is None:
+            return ProviderMatch(reachable=False)
+        shop = self.shops.get(self.shop_id)
+        books = self.ledger.balances(self.shop_id)
+        accounts = {"bkash": shop.bkash_account, "nagad": shop.nagad_account, "bank": shop.bank_account}
+        now = self.clock.now()
+        try:
+            matches = []
+            for method, account_id in accounts.items():
+                if not account_id:
+                    continue
+                provider = self.sandbox.account(account_id)["balance_paisa"]
+                unbooked: list[str] = []
+                if provider != books.get(method, 0):
+                    for txn in self.sandbox.statement(account_id, limit=30):
+                        if txn["txn_type"] in ("cash_in", "cash_out") or self.ledger.has_trx(self.shop_id, txn["trx_id"]):
+                            continue  # own transfers are booked without a TrxID
+                        sign = "+" if txn["direction"] == "credit" else "-"
+                        unbooked.append(f"{sign}{fmt_taka(txn['amount_paisa'])} TrxID {txn['trx_id']}")
+                        if len(unbooked) == 3:
+                            break
+                matches.append(AccountMatch(method=method, account_id=account_id, books_paisa=books.get(method, 0),
+                                            provider_paisa=provider, unbooked=unbooked))
+            missing = []
+            for row in self.session.scalars(select(PaymentRecord).where(
+                    PaymentRecord.shop_id == self.shop_id, PaymentRecord.status == "completed",
+                    PaymentRecord.executed_at >= now - timedelta(days=lookback_days))):
+                account_id = accounts.get(row.method)
+                if row.sandbox_txn_id and account_id and \
+                        self.sandbox.find_transaction(account_id, row.sandbox_txn_id) is None:
+                    missing.append(f"{fmt_taka(row.amount_paisa)} to {row.payee_name or 'payee'} "
+                                   f"(TrxID {row.sandbox_txn_id})")
+        except (SandboxError, httpx.HTTPError):  # an error answer, or the provider not reachable at all
+            return ProviderMatch(reachable=False)
+        stuck = [f"{fmt_taka(r.amount_paisa)} to {r.payee_name or 'payee'}" for r in self.session.scalars(
+            select(PaymentRecord).where(PaymentRecord.shop_id == self.shop_id, PaymentRecord.status == "executing",
+                                        PaymentRecord.created_at < now - timedelta(minutes=15)))]
+        return ProviderMatch(reachable=True, accounts=matches, missing_at_provider=missing, stuck=stuck)
 
     # ---- schedules and the kill switch
 
@@ -188,6 +252,22 @@ class PaymentsService:
             PaymentRecord.shop_id == self.shop_id, PaymentRecord.status.in_(("scheduled", "executing", "paused")),
             PaymentRecord.execute_on == day))
         return int(executed) + int(pending)
+
+    def savings_between(self, start: date, end: date) -> tuple[int, int]:
+        """Money moved to the owner's savings with execute dates from `start` to `end`: (completed, still
+        going out: scheduled, paused or executing)."""
+        rows = self.session.execute(select(PaymentRecord.status, PaymentRecord.amount_paisa).where(
+            PaymentRecord.shop_id == self.shop_id, PaymentRecord.purpose == "savings",
+            PaymentRecord.execute_on >= start, PaymentRecord.execute_on <= end)).all()
+        done = sum(a for s, a in rows if s == "completed")
+        pending = sum(a for s, a in rows if s in ("scheduled", "paused", "executing"))
+        return done, pending
+
+    def status_counts(self) -> dict[str, int]:
+        """How many of the shop's payments are in each status (for monitoring)."""
+        rows = self.session.execute(select(PaymentRecord.status, func.count()).where(
+            PaymentRecord.shop_id == self.shop_id).group_by(PaymentRecord.status))
+        return {status: count for status, count in rows}
 
     def recent(self, since: datetime) -> list[PaymentView]:
         """Payments created since `since` that went out or are still going out."""

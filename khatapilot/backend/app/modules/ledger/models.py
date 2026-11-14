@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Index, String, Text, text
+from sqlalchemy import Index, String, Text, false, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db import Base
@@ -55,6 +55,8 @@ class Obligation(Base):
     source_ref: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime]
     settled_at: Mapped[datetime | None] = mapped_column(default=None)
+    # The owner said this one comes first ("Meghna is urgent"); the Ledger tab flags it a week ahead.
+    priority: Mapped[bool] = mapped_column(default=False, server_default=false())
 
 
 class RecurringBill(Base):
@@ -69,3 +71,28 @@ class RecurringBill(Base):
     day_of_month: Mapped[int]
     method: Mapped[str] = mapped_column(String(8))
     created_at: Mapped[datetime]
+
+
+class SmsQuestion(Base):
+    """Money in from a customer who owes baki, held unbooked until the owner says what it is for: paying off
+    that baki, or something else (a sale). Either a forwarded SMS (source "sms": the text is kept so the
+    answer books exactly what was forwarded, re-read by the same strict parser), or money the owner typed
+    ("Babul paid 2000"; source "typed": no SMS, so trx_id and sms_text are empty and `method` says how it came)."""
+
+    __tablename__ = "ledger_sms_questions"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    shop_id: Mapped[str] = mapped_column(String(64), index=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    conversation_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    decision_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    trx_id: Mapped[str] = mapped_column(String(32))
+    sms_text: Mapped[str] = mapped_column(Text)
+    customer_name: Mapped[str] = mapped_column(String(128))
+    owed_paisa: Mapped[int]  # what the customer owed when the question was asked
+    amount_paisa: Mapped[int]
+    status: Mapped[str] = mapped_column(String(12), default="open")  # open | baki | other
+    created_at: Mapped[datetime]
+    answered_at: Mapped[datetime | None] = mapped_column(default=None)
+    source: Mapped[str] = mapped_column(String(8), default="sms", server_default="sms")  # sms | typed
+    method: Mapped[str] = mapped_column(String(8), default="cash", server_default="cash")  # typed only

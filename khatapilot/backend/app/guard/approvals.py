@@ -1,10 +1,13 @@
 """Actions waiting for the owner. Tier 1: the owner taps Approve. Tier 3: the owner sees the full
 details (payee, number, amount, date), confirms and enters the PIN. The stored action is hashed when
-it is held, and the hash is checked again on approval, so what runs is exactly what was shown."""
+it is held, and the hash is checked again on approval, so what runs is exactly what was shown. Facts that
+can change while an action waits (a blocked number, the same payment already made, this month's savings
+already moved) are checked again too (`rechecks.py`)."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -16,6 +19,7 @@ from app.core.actions import ActionKind, ProposedAction, canonical_json, sha256_
 from app.core.clock import Clock
 from app.core.decisions import CheckStatus, Decision, Outcome
 from app.core.ids import new_id
+from app.core.money import fmt_taka
 from app.core.provenance import TurnContext
 from app.guard.executor import ActionExecutor, ExecutionMeta
 from app.guard.models import PendingAction
@@ -62,8 +66,10 @@ def _view(row: PendingAction) -> PendingView:
 
 class ApprovalService:
     def __init__(self, *, session: Session, clock: Clock, shop_id: str, store: PolicyStore, pins: PinManager,
-                 executor: ActionExecutor, recorder: Recorder, ttl_minutes: int = 30) -> None:
+                 executor: ActionExecutor, recorder: Recorder, ttl_minutes: int = 30,
+                 recheck: Callable[[ProposedAction, datetime], str | None] | None = None) -> None:
         self.session = session
+        self.recheck = recheck  # facts that may have changed since the action was held (app.guard.rechecks)
         self.clock = clock
         self.shop_id = shop_id
         self.store = store
@@ -118,6 +124,12 @@ class ApprovalService:
             return self._refuse(row, meta, "STOP is on. Resume with your PIN first.")
         if _hash(row.action_json) != row.action_hash:
             return self._refuse(row, meta, "The held action changed after it was shown to you, so it was not run.")
+        if self.recheck and (problem := self.recheck(ProposedAction.model_validate_json(row.action_json),
+                                                     row.created_at)):
+            row.status, row.resolved_at = "failed", self.clock.now()
+            row.result_json = json.dumps({"status": "refused", "message": problem})
+            self.session.flush()
+            return self._refuse(row, meta, problem)
         if row.requires_pin:
             check = self.pins.verify(pin)
             self.recorder.event(request_id=request_id, channel=channel, actor="owner", provenance="owner", event="pin",
@@ -139,6 +151,57 @@ class ApprovalService:
         row.resolved_at = self.clock.now()
         self.session.flush()
         return ApprovalResult(ok=result.ok, status=result.status, message=result.message, data=result.data)
+
+    def remove_reminder(self, pending_id: str, customer_name: str, *, request_id: str,
+                        channel: str = "web") -> ApprovalResult:
+        """Take one customer out of a held batch of baki reminders before it is approved. This can only
+        remove: every other reminder stays exactly as it was shown (the batch is hashed again), and taking
+        out the last one cancels the batch."""
+        self._expire()
+        row = self.session.get(PendingAction, pending_id)
+        if row is None or row.shop_id != self.shop_id or row.status != "pending":
+            return ApprovalResult(ok=False, status="not_found", message="There is no such pending action.")
+        if row.tool != "send_reminders":
+            return ApprovalResult(ok=False, status="refused", message="Only baki reminders can be changed this way.")
+        if _hash(row.action_json) != row.action_hash:
+            return ApprovalResult(ok=False, status="refused",
+                                  message="The held reminders changed after they were shown to you, so nothing changed.")
+        action = json.loads(row.action_json)
+        drafts = action.get("params", {}).get("reminders", [])
+        keep = [d for d in drafts if d.get("customer_name") != customer_name]
+        if len(keep) == len(drafts):
+            return ApprovalResult(ok=False, status="not_found",
+                                  message=f"{customer_name} is not in these reminders.")
+        before = row.summary
+        if not keep:
+            row.status, row.resolved_at = "rejected", self.clock.now()
+            self.session.flush()
+            self.recorder.event(request_id=request_id, channel=channel, actor="owner", provenance="owner",
+                                event="approval", summary=before, decision="REJECTED",
+                                reason=f"The owner took out {customer_name}, the last customer in the batch, so no "
+                                       "reminder will be sent.", decision_id=row.decision_id, tier=row.tier)
+            return ApprovalResult(ok=True, status="rejected",
+                                  message=f"{customer_name} was taken out. Nobody is left, so nothing will be sent.")
+        params = action["params"]
+        params["reminders"] = keep
+        params["removed"] = [*params.get("removed", []), customer_name]
+        n, total = len(keep), sum(int(d.get("owed_paisa", 0)) for d in keep)
+        names = ", ".join(d["customer_name"] for d in keep[:3]) + (f" and {n - 3} more" if n > 3 else "")
+        summary = f"Send baki reminders to {n} customer{'s' if n != 1 else ''} who owe {fmt_taka(total)}: {names}"
+        action["summary"] = summary
+        row.action_json = json.dumps(action, ensure_ascii=False)
+        row.action_hash = _hash(row.action_json)
+        row.summary = summary
+        self.session.flush()
+        self.recorder.event(request_id=request_id, channel=channel, actor="owner", provenance="owner",
+                            event="approval", summary=f"Took {customer_name} out of: {before}", decision="NARROWED",
+                            reason=(f"The owner removed {customer_name} before approving; no reminder will go to them. "
+                                    f"{n} still wait{'s' if n == 1 else ''} for approval."),
+                            decision_id=row.decision_id, tier=row.tier)
+        return ApprovalResult(ok=True, status="narrowed",
+                              message=(f"{customer_name} was taken out. {n} reminder{'s' if n != 1 else ''} still "
+                                       "wait for your approval."),
+                              data={"pending": _view(row).model_dump(mode="json")})
 
     def reject(self, pending_id: str, *, request_id: str, channel: str = "web") -> ApprovalResult:
         row = self.session.get(PendingAction, pending_id)

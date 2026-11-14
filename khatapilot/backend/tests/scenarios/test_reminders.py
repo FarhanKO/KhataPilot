@@ -31,7 +31,9 @@ def test_reminders_go_out_only_after_approve_and_payments_are_followed(app):
     app.advance(1)
     sms = app.http.post("/api/sim/incoming-payment", json={"from_number": BABUL, "amount_taka": 7541,
                                                             "from_name": "Babul Mia"}).json()
-    app.chat("record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
+    out = app.chat("record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
+    [asked] = [o for o in out["outcomes"] if o["status"] == "asked"]  # Babul owes baki: what is this money for?
+    app.http.post(f"/api/sms-questions/{asked['data']['question_id']}/answer", json={"purpose": "baki"})
     after = app.http.get("/api/reminders").json()
     babul = next(r for r in after["reminders"] if r["customer_name"] == "Babul Mia")
     assert (babul["outcome"], babul["paid_since_paisa"], babul["still_owes_paisa"]) == ("paid", 754_100, 0)

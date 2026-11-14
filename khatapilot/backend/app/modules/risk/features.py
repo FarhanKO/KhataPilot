@@ -5,11 +5,22 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from app.modules.risk.schemas import PaymentFeatures
 
 # Beyond this many past payments a payee is simply "well known"; capping keeps the feature from
 # drifting just because histories grow over time.
 HISTORY_CAP = 12
+
+# A payee the shop knows well, suddenly paid far more than usual: an extra zero typed by mistake, a
+# "send the advance now" call, or an amount someone slipped into a message. The simulated training data
+# never has this, so the model scores it as normal (0.000 for a trusted payee at 10x). This floor makes
+# it need the PIN whatever the model or the rules say. Small sums (a ৳50 recharge becoming ৳500) are left alone.
+UNUSUAL_RATIO = 5.0
+UNUSUAL_HISTORY = 3  # fewer past payments and the "usual" amount is not settled yet
+UNUSUAL_MIN_PAISA = 1_000_00
+UNUSUAL_FLOOR = 0.6  # above the guard's medium threshold (PIN), below its high one (block)
 
 FEATURES = [
     "log_amount",
@@ -46,6 +57,21 @@ def vector(f: PaymentFeatures) -> list[float]:
         float(f.payments_last_day),
         float(f.new_payees_last_day),
     ]
+
+
+def unusual_for_payee(f: PaymentFeatures) -> bool:
+    """A well-known payee paid at least UNUSUAL_RATIO times their usual amount (see UNUSUAL_FLOOR)."""
+    return (f.payee_history_count >= UNUSUAL_HISTORY and bool(f.payee_median_paisa)
+            and f.amount_paisa >= UNUSUAL_MIN_PAISA
+            and f.amount_paisa >= UNUSUAL_RATIO * f.payee_median_paisa)
+
+
+def unusual_rows(X: np.ndarray) -> np.ndarray:
+    """unusual_for_payee for every row of a feature matrix built by vector()."""
+    taka = np.expm1(X[:, FEATURES.index("log_amount")])
+    history = np.expm1(X[:, FEATURES.index("log_history")])
+    return ((history >= UNUSUAL_HISTORY - 1e-6) & (taka * 100 >= UNUSUAL_MIN_PAISA - 1)
+            & (X[:, FEATURES.index("amount_to_payee_usual")] >= UNUSUAL_RATIO))
 
 
 def phrase(feature: str, f: PaymentFeatures) -> str | None:

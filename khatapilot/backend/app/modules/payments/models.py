@@ -25,6 +25,7 @@ class PaymentRecord(Base):
     approved_with_pin: Mapped[bool] = mapped_column(default=False)
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
     note: Mapped[str | None] = mapped_column(Text, default=None)
+    purpose: Mapped[str] = mapped_column(String(12), default="payment", server_default="payment")  # or "savings"
     sandbox_txn_id: Mapped[str | None] = mapped_column(String(32), default=None)
     failure: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime]

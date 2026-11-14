@@ -3,7 +3,7 @@
 // adapted from kokonutui's "AI Voice" (MIT, https://kokonutui.com, @kokonutui): the newest sound enters
 // on the right and the row slides left a fraction of a bar at a time, with fading edges.
 
-import { Mic, Pause } from "lucide-react";
+import { Loader2, Mic, Pause } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 const BAR_COUNT = 36;
@@ -19,8 +19,9 @@ const face = (visible: boolean) => (visible ? "scale-100 opacity-100 blur-0" : "
 
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
-export function VoiceButton({ listening, level, language, onStart, onStop }: {
+export function VoiceButton({ listening, transcribing = false, level, language, onStart, onStop }: {
   listening: boolean;
+  transcribing?: boolean; // the recording is being written down on the shop's computer
   level: RefObject<number>;
   language: string;
   onStart: () => void;
@@ -84,7 +85,7 @@ export function VoiceButton({ listening, level, language, onStart, onStop }: {
     return () => clearInterval(id);
   }, [listening]);
 
-  const label = listening ? "Pause listening" : "Talk instead of typing";
+  const label = transcribing ? "Writing down what you said" : listening ? "Pause listening" : "Talk instead of typing";
   return (
     <div className="flex items-center gap-1.5">
       {/* The waveform and timer slide out beside the mic while listening. */}
@@ -117,18 +118,20 @@ export function VoiceButton({ listening, level, language, onStart, onStop }: {
           type="button"
           aria-label={label}
           aria-pressed={listening}
-          title={listening ? `Listening in ${language}. Tap to pause.` : label}
+          title={transcribing ? "Writing down what you said…" : listening ? `Listening in ${language}. Tap to pause.` : label}
+          disabled={transcribing}
           onClick={listening ? onStop : onStart}
           className={`relative flex size-9 items-center justify-center rounded-full transition-[scale,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${
             listening ? "scale-110 bg-ink/10 text-ink" : "text-muted hover:bg-raised hover:text-ink"
           }`}
         >
-          <Mic aria-hidden className={`${FACE} size-4 ${face(!listening)}`} />
+          <Mic aria-hidden className={`${FACE} size-4 ${face(!listening && !transcribing)}`} />
           <Pause aria-hidden className={`${FACE} size-4 fill-current ${face(listening)}`} />
+          <Loader2 aria-hidden className={`${FACE} size-4 animate-spin ${face(transcribing)}`} />
         </button>
       </div>
       <output aria-live="polite" className="sr-only">
-        {listening ? `Listening in ${language}` : ""}
+        {transcribing ? "Writing down what you said" : listening ? `Listening in ${language}` : ""}
       </output>
     </div>
   );

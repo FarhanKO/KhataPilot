@@ -4,17 +4,19 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import numpy as np
 import pytest
 
 from app.bootstrap import load_fraud_model
 from app.core.decisions import CheckStatus, Outcome
 from app.guard.tools import PaymentArgs, payment_action
+from app.modules.risk.features import unusual_for_payee, unusual_rows, vector
 from app.modules.risk.schemas import PaymentFeatures
 from app.modules.risk.sentinel import ModelIntegrityError
-from app.modules.risk.service import FraudSentinel, RiskService
+from app.modules.risk.service import FraudSentinel, RiskService, score_rules
 from app.modules.risk.training import calculate_psi, train
 from data.generate_payments import generate
-from tests.guard_harness import SCAMMER, turn
+from tests.guard_harness import MEGHNA, SCAMMER, turn
 
 SALES = 14_000_00  # ৳14,000 a day, in paisa
 
@@ -63,6 +65,33 @@ def test_splitting_under_the_limit_is_caught(model):
                                  payee_median_paisa=9_400_00, payments_last_hour=3, payments_last_day=3,
                                  new_payees_last_day=1, local_hour=15))
     assert risk.score >= 0.5, risk
+
+
+@pytest.mark.parametrize("trusted", [True, False])
+def test_a_well_known_payee_paid_ten_times_usual_needs_the_pin(model, trusted):
+    # The simulated data has no such payments, so the model alone scored this 0.000; the floor holds it.
+    risk = model.assess(features(amount_paisa=5_000_00, payee_trusted=trusted, payee_median_paisa=500_00))
+    assert 0.5 <= risk.score < 0.85, risk
+    assert "10.0x the usual payment to this payee" in risk.reasons
+    assert score_rules(features(amount_paisa=5_000_00, payee_trusted=trusted, payee_median_paisa=500_00)).score >= 0.5
+
+
+@pytest.mark.parametrize("overrides", [
+    dict(amount_paisa=8_000_00, payee_median_paisa=2_000_00),  # 4x: a big order, not unusual enough
+    dict(amount_paisa=500_00, payee_median_paisa=50_00),  # a ৳50 recharge becoming ৳500
+    dict(amount_paisa=5_000_00, payee_median_paisa=500_00, payee_history_count=2),  # "usual" not settled yet
+])
+def test_the_floor_leaves_ordinary_jumps_alone(overrides):
+    f = features(**overrides)
+    assert not unusual_for_payee(f)
+    assert score_rules(f).score < 0.5
+
+
+def test_the_floor_is_the_same_in_batch_and_single_scoring(model):
+    rows = [features(amount_paisa=a, payee_median_paisa=m, payee_history_count=n)
+            for a, m, n in [(5_000_00, 500_00, 15), (8_000_00, 2_000_00, 8), (500_00, 50_00, 20), (5_000_00, 500_00, 3)]]
+    X = np.array([vector(f) for f in rows], dtype=float)
+    assert unusual_rows(X).tolist() == [unusual_for_payee(f) for f in rows] == [True, False, False, True]
 
 
 def test_training_is_deterministic(payments, model):
@@ -117,6 +146,18 @@ def test_the_guard_blocks_the_same_transfer_at_night(world, model):
     decision = _evaluate_stranger_payment(world, model)
     assert decision.check("fraud").status is CheckStatus.BLOCK
     assert decision.outcome is Outcome.BLOCK
+
+
+def test_the_guard_holds_a_trusted_payee_paid_far_more_than_usual(world, model):
+    world.deps.fraud_model = model
+    world.paid_before(MEGHNA, "Meghna Distributors", 1_500, times=4)
+    t = turn("pay Meghna Distributors 9000")
+    with world.guard() as guard:
+        decision = guard.engine.evaluate(payment_action(PaymentArgs(payee_name="Meghna Distributors",
+                                                                    amount_taka=9000), t), t)
+    fraud = decision.check("fraud")
+    assert fraud.status is CheckStatus.ESCALATE and "6.0x the usual payment" in fraud.detail, fraud.detail
+    assert "fraud-sentinel-mm-v1" in fraud.detail and decision.outcome is Outcome.HOLD_PIN
 
 
 def test_psi_flags_a_shifted_distribution():

@@ -62,6 +62,8 @@ function verdict(thread: Thread): { tone: Tone; label: string } {
   if (results.some((d) => d === "EXECUTED" || d === "SUBMITTED")) return { tone: "ok", label: "DONE" };
   if (results.includes("SCHEDULED")) return { tone: "ok", label: "SCHEDULED" };
   if (results.includes("REJECTED")) return { tone: "neutral", label: "REJECTED" };
+  // A question still open: asked, and nothing recorded after it on this card.
+  if (results.includes("ASKED") && !results.includes("RECORDED")) return { tone: "warn", label: "WAITING FOR YOU" };
   if (decisions.some((d) => d.startsWith("HELD"))) return { tone: "warn", label: "WAITING FOR YOU" };
   if (results.includes("ALERT")) return { tone: "warn", label: "ALERT" };
   if (decisions.length || results.includes("RECORDED")) return { tone: "ok", label: "ALLOWED" };
@@ -82,7 +84,8 @@ function tierTone(tier: number | null): Tone {
 
 function decisionTone(decision: string): Tone {
   if (decision === "BLOCKED" || decision === "FAILED" || decision === "REFUSED" || decision === "FROZEN") return "bad";
-  if (decision.startsWith("HELD") || decision === "ALERT" || decision.startsWith("PIN_")) return decision === "PIN_OK" ? "ok" : "warn";
+  if (decision.startsWith("HELD") || decision === "ALERT" || decision === "ASKED" || decision.startsWith("PIN_"))
+    return decision === "PIN_OK" ? "ok" : "warn";
   if (decision === "INFO" || decision === "REJECTED" || decision === "WITHDRAWN") return "neutral";
   return "ok";
 }
@@ -255,7 +258,12 @@ function ThreadCard({ thread, defaultOpen }: { thread: Thread; defaultOpen: bool
         {!open && !turn && first && <p className="line-clamp-1 text-[13px] text-muted">{first.summary}</p>}
         {open && thread.reply && (
           <div className="border-t border-line pt-2.5 text-xs leading-relaxed text-muted">
-            <span className="label mr-1.5 text-[10px] text-ink">Reply</span>
+            <span className="label mr-1.5 text-[10px] text-ink">
+              Reply
+              {thread.reply.route === "rules" && <span className="text-ok"> · offline rules, no API call</span>}
+              {thread.reply.route === "offline" && <span className="text-warn"> · offline, AI unreachable</span>}
+              {thread.reply.route === "capped" && <span className="text-warn"> · offline, AI budget used up</span>}
+            </span>
             {plainReply(thread.reply.text)}
           </div>
         )}

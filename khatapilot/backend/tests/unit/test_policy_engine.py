@@ -9,7 +9,7 @@ from app.core.decisions import CheckStatus, Decision, Outcome
 from app.guard.tools import PaymentArgs, payment_action, simple_action
 from app.modules.risk.schemas import RiskScore
 from app.modules.risk.service import RiskService
-from tests.guard_harness import BISMILLAH, PIN, RAHIM, SCAMMER, stranger, turn
+from tests.guard_harness import BISMILLAH, MEGHNA, PIN, RAHIM, SCAMMER, stranger, turn
 
 PASS, ESCALATE, BLOCK, SKIP, INFO = (CheckStatus.PASS, CheckStatus.ESCALATE, CheckStatus.BLOCK, CheckStatus.SKIP,
                                      CheckStatus.INFO)
@@ -96,6 +96,17 @@ def test_too_many_payments_in_an_hour(world):
                          amount_taka=100).status == "ok"
     d = evaluate(world, "pay Rahim Traders 100", payee_name="Rahim Traders", amount_taka=100)
     assert status(d, "velocity") is ESCALATE and "6 payments within an hour" in d.check("velocity").detail
+
+
+def test_a_trusted_payee_paid_far_more_than_usual_needs_the_pin(world):
+    # Under every limit and to a trusted payee, so only the fraud score can stop it (it used to pass).
+    world.paid_before(MEGHNA, "Meghna Distributors", 1_500, times=4)
+    usual = evaluate(world, "pay Meghna Distributors 1500", payee_name="Meghna Distributors", amount_taka=1500)
+    big = evaluate(world, "pay Meghna Distributors 9000", payee_name="Meghna Distributors", amount_taka=9000)
+    assert (usual.outcome, usual.tier) == (Outcome.ALLOW, 2)
+    assert status(big, "limits") is PASS and status(big, "payee") is PASS
+    assert status(big, "fraud") is ESCALATE and "the usual payment to this payee" in big.check("fraud").detail
+    assert (big.outcome, big.tier) == (Outcome.HOLD_PIN, 3)
 
 
 @pytest.mark.parametrize(("score", "expected"), [(0.49, PASS), (0.50, ESCALATE), (0.849, ESCALATE), (0.85, BLOCK)])

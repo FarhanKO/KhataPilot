@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     llm_fallbacks: bool = True  # server-side refusal fallback on the Claude API (supported models only)
     llm_timeout_seconds: float = 60.0
+    # With a real model: short, plain owner requests the offline planner reads for certain (balances,
+    # who owes, "sold rice ৳1,500 cash") are answered by it, at no API cost; everything else goes to the model.
+    llm_rules_first: bool = True
+    # With a real model: when it cannot be reached (network, timeout, busy, down), the offline planner
+    # answers that turn instead, marked "offline" in the chat and the trace. A bad key still shows its error.
+    llm_offline_fallback: bool = True
     anthropic_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
     openai_base_url: str | None = None
@@ -53,7 +59,71 @@ class Settings(BaseSettings):
     credit_model_path: Path = REPO_ROOT / "backend" / "models_store" / "credit_model.joblib"
     # How often scheduled payments are checked and run (0 disables the background loop).
     scheduler_interval_seconds: int = 60
-    # Cash forecast: the safety buffer the owner wants to keep on hand, and how far ahead to look.
+    # Run that loop inside the web server (the simple way), or turn this off and run it in its own process
+    # (`python scripts/worker.py`), so a busy or restarting web server never delays a payment or an alert. A
+    # lease in the database makes sure only one process runs the jobs either way.
+    scheduler_in_web: bool = True
+    # Logs: one JSON object per line on stderr and in data_dir/logs (rotated), `text` for a terminal. Errors are
+    # grouped in data_dir/logs/errors.json and counted in /api/metrics; with SENTRY_DSN (and sentry-sdk
+    # installed) they also go to Sentry.
+    log_format: Literal["json", "text"] = "json"
+    log_level: str = "INFO"
+    sentry_dsn: str = ""
+    # Requests per client per minute (0 disables a bucket): routes that take the PIN, chat messages (each can
+    # call the model), and everything else. STOP is never limited.
+    rate_limit_pin_per_minute: int = 20
+    rate_limit_chat_per_minute: int = 60
+    rate_limit_other_per_minute: int = 600
+    # Backups of the books and the audit log (python scripts/backup.py). With `backup_daily` the backend also
+    # makes one a day itself; the newest `backup_keep` are kept (copies made before a restore always are).
+    backup_dir: Path = REPO_ROOT / "var" / "backups"
+    backup_daily: bool = False
+    backup_keep: int = 14
+    # AI spend per shop per calendar month, in US$ at list prices (0 = no cap). When it is reached, the
+    # offline planner answers every turn until the month ends; the owner sees the month's use in Alerts.
+    llm_monthly_budget_usd: float = 2.0
+    usd_to_bdt: float = 122.0  # only to show the owner the spend in taka, "about ৳…"
+    # /api/metrics (Prometheus text). With a token set, a scraper sends it as a bearer token; without one,
+    # only this machine (loopback) can read the metrics.
+    metrics_token: SecretStr = SecretStr("")
+    # The owner's own Android phone, through the "SMS Gateway for Android" app in Local Server mode
+    # (app/infra/phone_gateway.py): it hands KhataPilot the bKash, Nagad and bank SMS it receives, and can send
+    # SMS from the owner's SIM. Over USB: `adb forward tcp:8080 tcp:8080` and `adb reverse tcp:8000 tcp:8000`.
+    phone_gateway_url: str = ""  # e.g. http://127.0.0.1:8080 (empty: no phone)
+    phone_gateway_user: str = ""
+    phone_gateway_password: SecretStr = SecretStr("")
+    phone_webhook_key: SecretStr = SecretStr("")  # the app's Settings > Webhooks > Signing Key
+    phone_webhook_url: str = "http://127.0.0.1:8000/api/phone/webhook"  # this backend, as the phone reaches it
+    # A money SMS from the provider's own sender ID ("bKash", "NAGAD", a bank) on the owner's phone: "sender_id"
+    # books it even when the provider cannot confirm the TrxID (there is no statement API for a real personal
+    # account); "provider" books only what the provider confirms. Above `phone_sms_review_taka`, an unconfirmed
+    # SMS always waits for the owner. A money SMS from an ordinary number is never booked.
+    phone_sms_trust: Literal["sender_id", "provider"] = "sender_id"
+    phone_sms_review_taka: int = 20_000
+    # Every SMS KhataPilot sends (reminders, the owner's alerts) passes the guard and the simulated gateway's
+    # signature check; with `sms_via_phone` it then also leaves from the owner's phone as a real SMS.
+    sms_via_phone: bool = False
+    owner_phone: str = ""  # the owner's own number, for alerts by SMS
+    owner_alert_sms: bool = False  # urgent and important alerts also go to owner_phone by SMS
+    owner_alert_sms_per_day: int = 6
+
+    # The advisor: once a week (local time, on this weekday, 0 = Monday ... 5 = Saturday, from this hour) its
+    # advice lands in Alerts, written by the model from the books' facts (checked number by number) or, offline
+    # or over the AI budget, in fixed words. The owner can also ask for advice in chat at any time.
+    advice_weekly: bool = True
+    advice_weekday: int = 5
+    advice_hour: int = 9
+
+    # Voice input: speech is turned into text on this machine by an offline Whisper model (faster-whisper,
+    # `pip install -r requirements-voice.txt`, `python scripts/get_voice_model.py`), primed with the shop's own
+    # customer and supplier names and Banglish words. Without it, the browser's own recognizer is used.
+    stt_model: str = "large-v3-turbo"  # or small / medium for slower machines
+    stt_model_dir: Path = REPO_ROOT / "var" / "models" / "whisper"
+    stt_threads: int = 0  # 0: as many as the CPU has
+    stt_enabled: bool = True
+
+    # Cash forecast: the standard safety buffer, used until the books have two weeks of sales to size one
+    # from the shop (or the owner sets their own in chat), and how far ahead to look.
     forecast_buffer_taka: int = 5_000
     forecast_days: int = 14
 
@@ -74,7 +144,7 @@ class Settings(BaseSettings):
     intent_ttl_minutes: int = 30
     agent_max_steps: int = 6
 
-    @field_validator("data_dir", "risk_model_path", "credit_model_path")
+    @field_validator("data_dir", "risk_model_path", "credit_model_path", "backup_dir", "stt_model_dir")
     @classmethod
     def _absolute_paths(cls, v: Path) -> Path:
         return v if v.is_absolute() else (REPO_ROOT / v)

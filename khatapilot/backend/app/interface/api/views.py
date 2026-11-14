@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,7 +15,7 @@ from app.core.provenance import Sender
 from app.guard.service import Guard
 from app.infra.sandbox_client import SandboxError
 from app.interface.deps import get_container, require_owner
-from app.interface.jobs import check_cash, run_due_payments
+from app.interface.jobs import check_cash, check_provider, run_due_payments
 
 router = APIRouter(tags=["views"])
 
@@ -50,11 +50,25 @@ def ledger_today(container=Depends(get_container), _owner: Sender = Depends(requ
 
 @router.get("/ledger/entries")
 def ledger_entries(limit: int = Query(default=50, le=500), offset: int = Query(default=0, ge=0),
+                   day: date | None = None, by_day: bool = False,
                    container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> dict:
+    """All entries newest first; with `by_day` (or a `day`), one day's entries and the days either side.
+
+    `by_day` without a `day` means the latest day that has entries.
+    """
     with container.db.session() as session:
         guard = Guard(session, container.guard_deps)
-        entries = guard.ledger.entries(container.settings.shop_id, limit=limit, offset=offset)
-        return {"total": guard.ledger.count(container.settings.shop_id), "entries": [
+        shop = container.settings.shop_id
+        page: dict = {}
+        if by_day or day is not None:
+            day, newer, older = guard.ledger.entry_days(shop, day)
+            page = {"day": day.isoformat() if day else None, "newer_day": newer.isoformat() if newer else None,
+                    "older_day": older.isoformat() if older else None,
+                    "day_total": guard.ledger.count(shop, day=day) if day else 0}
+            entries = guard.ledger.entries(shop, day=day, limit=limit, offset=offset) if day else []
+        else:
+            entries = guard.ledger.entries(shop, limit=limit, offset=offset)
+        return {"total": guard.ledger.count(shop), **page, "entries": [
             {**e.model_dump(mode="json"), "counterparty_number": _masked(e.counterparty_number),
              "note": mask_text(e.note) if e.note else None} for e in entries]}
 
@@ -62,8 +76,12 @@ def ledger_entries(limit: int = Query(default=50, le=500), offset: int = Query(d
 @router.get("/debtors")
 def debtors(container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> list[dict]:
     with container.db.session() as session:
-        rows = Guard(session, container.guard_deps).ledger.baki_by_customer(container.settings.shop_id)
-        return [{**r.model_dump(mode="json"), "number": _masked(r.number)} for r in rows]
+        guard = Guard(session, container.guard_deps)
+        rows = guard.ledger.baki_by_customer(container.settings.shop_id)
+        stopped = {normalize_msisdn(o.number): o.source for o in guard.reminders._opt_out_rows()}
+        return [{**r.model_dump(mode="json"), "number": _masked(r.number),
+                 # "customer" (they replied STOP) or "owner" (the owner stopped them); None: reminders allowed
+                 "no_reminders": stopped.get(normalize_msisdn(r.number)) if r.number else None} for r in rows]
 
 
 @router.get("/obligations")
@@ -110,14 +128,19 @@ def audit_verify(container=Depends(get_container), _owner: Sender = Depends(requ
 
 @router.get("/llm/usage")
 def llm_usage(container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> dict:
-    """Tokens the model has used since the backend started, and their rough cost at list prices."""
+    """Tokens the model has used since the backend started and their rough cost at list prices, and
+    `month`: the shop's AI use this calendar month against its monthly budget (shown in Alerts)."""
     from app.agent.llm.anthropic_provider import estimate_cost
 
     provider = container.provider
     usage = dict(getattr(provider, "usage", None) or {})
     cost = estimate_cost(provider.model, usage) if usage else None
+    # Turns since start by who planned them: the model, the offline rules (no API call), or offline fallback.
     return {"provider": provider.name, "model": provider.model, "usage": usage,
-            "estimated_cost_usd": round(cost, 4) if cost is not None else None}
+            "estimated_cost_usd": round(cost, 4) if cost is not None else None,
+            "turns": dict(container.agent.routes),
+            # this calendar month for this shop, kept in the database (survives restarts), against the cap
+            "month": container.budget.status() if container.budget else None}
 
 
 @router.get("/trace/recent")
@@ -192,6 +215,12 @@ def run_due(container=Depends(get_container), _owner: Sender = Depends(require_o
     """Run scheduled payments that are due now (the background scheduler does this every minute)."""
     results = run_due_payments(container)
     return {"ran": len(results), "results": [{"status": r.status, "message": r.message} for r in results]}
+
+
+@router.post("/sim/provider-check")
+def provider_check(container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> dict:
+    """Run the daily match of the books against the provider now (the background loop runs it once a day)."""
+    return check_provider(container)
 
 
 @router.post("/sim/cash-check")

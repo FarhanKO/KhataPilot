@@ -8,6 +8,8 @@ from tests.scenarios.conftest import WALLET
 def trace(app) -> list[dict]:
     response = app.http.get("/api/trace/stream", params={"once": "true", "replay": 300})
     assert response.status_code == 200 and response.headers["content-type"].startswith("text/event-stream")
+    # never gzipped by the server in front of the web app (vite preview): gzip would hold live events back
+    assert response.headers["content-encoding"] == "identity" and "no-transform" in response.headers["cache-control"]
     return [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
 
@@ -78,3 +80,15 @@ def test_what_the_owner_decides_in_the_app_is_added_to_the_chat_the_model_sees(a
     assert app.http.post(f"/api/approvals/{held['id']}/reject").json()["status"] == "rejected"
     assert notes("cancel-1") == [f'Update from the app: you cancelled "{held["summary"]}". Nothing was done.']
     assert notes("approve-1") == [approved]  # each note goes only to the conversation the action came from
+
+def test_the_ledger_pages_through_the_books_one_day_at_a_time(app):
+    latest = app.http.get("/api/ledger/entries?by_day=true&limit=5").json()
+    today = app.http.get("/api/ledger/today").json()["totals"]["day"]
+    assert latest["day"] <= today and latest["newer_day"] is None and latest["older_day"] < latest["day"]
+    assert len(latest["entries"]) == min(5, latest["day_total"])
+    assert {e["local_date"] for e in latest["entries"]} == {latest["day"]}
+
+    older = app.http.get(f"/api/ledger/entries?day={latest['older_day']}&limit=500").json()
+    assert older["newer_day"] == latest["day"] and len(older["entries"]) == older["day_total"]
+    assert {e["local_date"] for e in older["entries"]} == {latest["older_day"]}
+    assert older["total"] == app.http.get("/api/ledger/entries").json()["total"]

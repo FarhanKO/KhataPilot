@@ -21,7 +21,7 @@ from app.guard.injection import CLEAN, scan, scan_owner
 from app.guard.intent import IntentMatch, IntentStore, extract_payment_intents, match_payment
 from app.guard.pin import PinManager
 from app.guard.policy_store import PolicyStore, normalize_number
-from app.guard.tiers import decide
+from app.guard.tiers import CONTROL_KINDS, decide
 from app.modules.payments.service import PaymentsService
 from app.modules.risk.service import RiskService
 from app.modules.shop.service import ShopService
@@ -69,6 +69,11 @@ class PolicyEngine:
         method = p.method or (saved.method if saved and saved.method in ("bkash", "nagad", "bank") else None) \
             or party_method or "bkash"
         resolved = p.model_copy(update={"payee_number": number, "method": method})
+        if resolved.purpose == "savings":
+            when = f" on {resolved.execute_on:%a %d %b}" if resolved.execute_on else " now"
+            return action.model_copy(update={"payment": resolved, "summary": (
+                f"Move {fmt_taka(resolved.amount_paisa)} to your savings ({resolved.payee_name or 'savings'}, "
+                f"{mask_number(number) if number else 'no number'}){when} by {resolved.method}")})
         who = resolved.payee_name or "payee"
         summary = (f"Pay {who} ({mask_number(number) if number else 'no number'}) {fmt_taka(resolved.amount_paisa)}"
                    + (f" on {resolved.execute_on:%a %d %b}" if resolved.execute_on else " now") + f" by {resolved.method}")
@@ -92,7 +97,8 @@ class PolicyEngine:
             match = match_payment(p, [intent for _, intent in active], today=today,
                                   payee_by_name=self.store.payee_by_name)
 
-        trusted_by_number = self.store.payee_by_number(p.payee_number) if p else None
+        number = p.payee_number if p else action.params.get("number") if action.kind in CONTROL_KINDS else None
+        trusted_by_number = self.store.payee_by_number(number) if number else None
         trusted_by_name = self.store.payee_by_name(p.payee_name) if p and p.payee_name else None
         limits = self.store.limits()
         recent_same, recent_new, last_hour, committed, risk = (), (), 0, 0, None
@@ -106,8 +112,11 @@ class PolicyEngine:
             committed = self.payments.committed_for_day(today)
             new_payees = {r.payee_number for r in recent if r.payee_number not in trusted_numbers
                           and r.created_at >= now - timedelta(days=1)}
+            # The owner's own savings account (saved with the PIN) is as known as a trusted payee.
+            own_savings = action.tool == C.SAVINGS_TOOL and p.purpose == "savings" and \
+                p.payee_number == (action.params.get("savings") or {}).get("account_number")
             features = self.risk.payment_features(p.payee_number, p.amount_paisa,
-                                                  payee_trusted=trusted_by_number is not None,
+                                                  payee_trusted=trusted_by_number is not None or own_savings,
                                                   new_payees_last_day=len(new_payees), now=now)
             risk = self.risk.score_payment(features)
 
@@ -124,7 +133,7 @@ class PolicyEngine:
             intent=match,
             trusted_by_number=trusted_by_number,
             trusted_by_name=trusted_by_name,
-            blocked_reason=self.store.blocked_reason(p.payee_number) if p else None,
+            blocked_reason=self.store.blocked_reason(number) if number else None,
             committed_today_paisa=committed,
             recent_same_payee_paisa=recent_same,
             recent_new_payees_paisa=recent_new,
@@ -161,6 +170,8 @@ class PolicyEngine:
             why = " ".join(c.detail for c in results if c.status is CheckStatus.ESCALATE)
             return f"Needs your confirmation and PIN. {why}"
         if outcome is Outcome.HOLD_APPROVAL:
+            if any(c.name == "owner_settings" for c in results if c.status is not CheckStatus.SKIP):
+                return "Waiting for you: nothing changes until you tap Approve in the app."
             return "Drafted for you: nothing is sent until you tap Approve."
         if tier == 2:
             return "Trusted payee, within your limits and exactly what you asked: KhataPilot can do this alone and will tell you."

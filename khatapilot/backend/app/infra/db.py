@@ -9,8 +9,9 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import DateTime, Engine, create_engine, event
+from sqlalchemy import DateTime, Engine, create_engine, event, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.schema import CreateColumn
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
@@ -66,6 +67,22 @@ class Database:
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """`create_all` makes missing tables but never changes an existing one, so a column added to a
+        model later (with a server default) is added here. Additive only: nothing is dropped or altered."""
+        existing = inspect(self.engine)
+        with self.engine.begin() as connection:
+            for table in Base.metadata.sorted_tables:
+                if not existing.has_table(table.name):
+                    continue
+                present = {c["name"] for c in existing.get_columns(table.name)}
+                for column in table.columns:
+                    if column.name in present or column.server_default is None:
+                        continue
+                    ddl = CreateColumn(column).compile(dialect=self.engine.dialect)
+                    connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN {ddl}'))
 
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)

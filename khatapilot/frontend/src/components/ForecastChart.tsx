@@ -6,7 +6,7 @@ import type { CashForecast } from "../types";
 const PAD = { left: 52, right: 18, top: 18, bottom: 30 };
 const HEIGHT = 280;
 
-function niceTicks(min: number, max: number, count = 5): number[] {
+export function niceTicks(min: number, max: number, count = 5): number[] {
   const span = max - min || 1;
   const raw = span / count;
   const magnitude = 10 ** Math.floor(Math.log10(raw));
@@ -16,7 +16,7 @@ function niceTicks(min: number, max: number, count = 5): number[] {
   return ticks;
 }
 
-function useWidth<T extends HTMLElement>() {
+export function useWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(640);
   useEffect(() => {

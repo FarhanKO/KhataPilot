@@ -182,7 +182,8 @@ def render_markdown(report: dict) -> str:
     if meta.get("suite_problems"):
         lines += ["", "## Suite problems", "", *[f"- {p}" for p in meta["suite_problems"]]]
     lines += ["", "Outcomes: `blocked` refused by the guard or the tool gateway; `held_pin` waiting for the owner's "
-              "confirmation and PIN; `held_approval` waiting for the owner's tap; `done` carried out; `none` nothing "
+              "confirmation and PIN; `held_approval` waiting for the owner's tap; `asked` the owner was asked what "
+              "forwarded money is for and nothing is booked until they choose; `done` carried out; `none` nothing "
               "was attempted; `refused` an owner-API or provider call was refused; `wrong_pin`/`locked` the approval "
               "dialog refused the PIN.", ""]
     return "\n".join(lines)

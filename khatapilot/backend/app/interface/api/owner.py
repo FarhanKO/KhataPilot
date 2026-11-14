@@ -1,4 +1,4 @@
-"""Owner-only controls: STOP and resume, limits, trusted payees, blocked numbers. (Consent for the
+"""Owner-only controls: STOP and resume, limits, trusted payees, blocked numbers, the savings account. (Consent for the
 credit profile lives with the credit module: `interface/api/credit.py`.)
 
 These are not LLM tools. Anything that makes the shop less safe needs the PIN; STOP never does.
@@ -47,6 +47,12 @@ class LimitsRequest(PinRequest):
 
 class PayeeRequest(PinRequest):
     name: str = Field(min_length=2, max_length=128)
+    number: str = Field(min_length=6, max_length=32)
+    method: Literal["bkash", "nagad", "bank"] = "bkash"
+
+
+class SavingsAccountRequest(PinRequest):
+    name: str = Field(default="My savings", min_length=2, max_length=64)
     number: str = Field(min_length=6, max_length=32)
     method: Literal["bkash", "nagad", "bank"] = "bkash"
 
@@ -104,6 +110,14 @@ def remove_payee(payee_id: str, body: PinRequest, container=Depends(get_containe
                  _owner: Sender = Depends(require_owner)):
     with controls(container) as (_, owner):
         return owner.remove_payee(body.pin, payee_id=payee_id, request_id=new_id("req"))
+
+
+@router.put("/savings-account", response_model=ControlResult)
+def set_savings_account(body: SavingsAccountRequest, container=Depends(get_container),
+                        _owner: Sender = Depends(require_owner)):
+    with controls(container) as (guard, owner):
+        return owner.set_savings_account(body.pin, savings=guard.savings, name=body.name, number=body.number,
+                                         method=body.method, request_id=new_id("req"))
 
 
 @router.post("/block", response_model=ControlResult)

@@ -9,6 +9,7 @@ EntryKind = Literal[
     "sale",  # cash or mobile-money sale
     "baki_sale",  # sale on customer credit: no money moves yet
     "baki_repayment",  # a customer paying back baki
+    "baki_adjustment",  # the owner forgiving baki ("out") or correcting what is owed (either way); no money moves
     "purchase",  # goods from a supplier (paid now, or on supplier credit)
     "supplier_payment",  # settling supplier credit
     "expense",
@@ -22,6 +23,8 @@ Method = Literal["cash", "bkash", "nagad", "bank", "credit"]
 LIQUID_METHODS: tuple[str, ...] = ("cash", "bkash", "nagad", "bank")
 # Kinds that are real money in or out of the shop (transfers and opening balances are not).
 CASHFLOW_EXCLUDED_KINDS = {"transfer", "opening_balance"}
+# Money the owner moved to their own savings: booked as an owner withdrawal in this category.
+SAVINGS_CATEGORY = "Personal savings"
 
 
 class NewLedgerEntry(BaseModel):
@@ -77,6 +80,8 @@ class CustomerBalance(BaseModel):
     outstanding_paisa: int
     oldest_open_since: date | None
     days_outstanding: int | None
+    # The earliest pay-back day the customer promised on baki still open (None when nobody said).
+    expected_by: date | None = None
 
 
 class ObligationView(BaseModel):
@@ -92,6 +97,7 @@ class ObligationView(BaseModel):
     due_date: date
     status: str
     note: str | None
+    priority: bool = False
 
 
 class NewObligation(BaseModel):
@@ -105,6 +111,16 @@ class NewObligation(BaseModel):
     due_date: date
     note: str | None = None
     source_ref: str | None = None
+    priority: bool = False
+
+
+class AmbiguousBill(Exception):
+    """More than one open bill matches the name the owner used."""
+
+    def __init__(self, name: str, matches: list[ObligationView]) -> None:
+        super().__init__(name)
+        self.name = name
+        self.matches = matches
 
 
 class DailyFlow(BaseModel):
@@ -115,7 +131,8 @@ class DailyFlow(BaseModel):
     baki_collected: int = 0
     other_in: int = 0
     routine_out: int = 0  # cash-on-delivery stock, small costs, other payments
-    owner_drawings: int = 0
+    owner_drawings: int = 0  # household withdrawals (savings transfers excluded)
+    savings: int = 0  # moved to the owner's savings: monthly, so not part of the everyday baseline
     supplier_payments: int = 0  # settling supplier credit (forecast from payables instead)
     bills_paid: int = 0  # recurring bills (forecast from the bill schedule instead)
 
@@ -167,12 +184,35 @@ class DuplicateSms(Exception):
     """This TrxID is already in the books."""
 
 
+# What money in from a customer who owes baki is for: "auto" books it against their baki without asking
+# (seeding, old callers); "baki" pays the baki off (anything over it is a sale); "other" is a sale.
+SmsPurpose = Literal["auto", "baki", "other"]
+
+
+class SmsQuestionView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    request_id: str | None
+    conversation_id: str | None
+    decision_id: str | None
+    trx_id: str
+    customer_name: str
+    owed_paisa: int
+    amount_paisa: int
+    status: str
+    created_at: datetime
+    answered_at: datetime | None
+    source: str = "sms"  # "typed" when the owner typed the money in rather than forwarding an SMS
+
+
 class BookedSms(BaseModel):
     kind: str
     entries: list[LedgerEntryView]
     counterparty: str | None
     customer_outstanding_paisa: int | None = None
     settled_payables: list[str] = []
+    over_baki_paisa: int = 0  # paid more than the baki owed: this much was booked as a sale
 
 
 class RecurringBillView(BaseModel):

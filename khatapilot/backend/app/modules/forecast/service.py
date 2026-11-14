@@ -26,8 +26,21 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import Clock, local_date
 from app.core.money import fmt_taka
-from app.modules.forecast.calendar import PRE_EID_FACTOR, sales_factor  # noqa: F401  (PRE_EID_FACTOR: public)
-from app.modules.forecast.schemas import CashForecast, ForecastDay, ForecastItem, Shortfall, Suggestion
+from app.modules.forecast.buffer import owner_buffer, size_buffer
+from app.modules.forecast.calendar import (  # noqa: F401  (PRE_EID_FACTOR, next_stock_up: public)
+    PRE_EID_FACTOR,
+    next_stock_up,
+    sales_factor,
+)
+from app.modules.forecast.models import BufferSetting
+from app.modules.forecast.schemas import (
+    CashForecast,
+    ForecastDay,
+    ForecastItem,
+    SafetyBuffer,
+    Shortfall,
+    Suggestion,
+)
 from app.modules.ledger.schemas import DailyFlow
 from app.modules.ledger.service import LedgerService
 from app.modules.payments.service import PaymentsService
@@ -103,6 +116,15 @@ def build_baseline(flows: dict[date, DailyFlow], shop_type: str, today: date) ->
     )
 
 
+def buffer_inputs(baseline: Baseline) -> tuple[float, float]:
+    """Business size (money in on a usual day) and its up-and-down (a typical day's distance from the
+    usual for that weekday), both from the baseline the forecast itself uses."""
+    daily_in = statistics.mean(baseline.sales_in) + baseline.baki_in
+    swing = math.sqrt(statistics.mean(s ** 2 + r ** 2 for s, r in zip(baseline.sales_spread, baseline.routine_spread))
+                      + baseline.baki_spread ** 2)
+    return daily_in, swing
+
+
 def expected_inflow(baseline: Baseline, shop_type: str, day: date) -> float:
     """Everyday money in on `day`: sales in cash and mobile money, plus baki coming back."""
     return baseline.sales_in[day.weekday()] * sales_factor(shop_type, day)[0] + baseline.baki_in
@@ -118,20 +140,55 @@ def _possessive(name: str | None) -> str:
 
 
 class ForecastService:
-    def __init__(self, session: Session, clock: Clock, shop_id: str, *, buffer_paisa: int) -> None:
+    def __init__(self, session: Session, clock: Clock, shop_id: str, *, standard_buffer_paisa: int) -> None:
+        self.session = session
         self.clock = clock
         self.shop_id = shop_id
-        self.buffer = buffer_paisa
+        self.standard_buffer = standard_buffer_paisa
+        self.buffer = standard_buffer_paisa  # resolved for the shop by each forecast()
         self.ledger = LedgerService(session, clock)
         self.payments = PaymentsService(session, clock, shop_id)
         self.shops = ShopService(session, clock)
 
     # ---------------------------------------------------------------- inputs
 
-    def _baseline(self, today: date, shop_type: str, since: date, bill_categories: set[str]) -> Baseline:
+    def _history(self, today: date) -> tuple[str, set[str], Baseline, int]:
+        """Shop type, recurring-bill categories, the everyday baseline and how many days had sales."""
+        shop = self.shops.get(self.shop_id)
+        shop_type = shop.shop_type if shop else "grocery"
+        since = shop.data_since if shop else today - timedelta(days=HISTORY_DAYS)
+        bill_categories = {b.category for b in self.ledger.recurring_bills(self.shop_id)}
         start = max(since, today - timedelta(days=HISTORY_DAYS))
         flows = self.ledger.daily_flows(self.shop_id, start, today - timedelta(days=1), bill_categories)
-        return build_baseline(flows, shop_type, today)
+        trading_days = sum(1 for f in flows.values() if f.sales_in > 0)
+        return shop_type, bill_categories, build_baseline(flows, shop_type, today), trading_days
+
+    # ---------------------------------------------------------------- the safety buffer
+
+    def _resolve_buffer(self, baseline: Baseline, trading_days: int) -> SafetyBuffer:
+        daily_in, swing = buffer_inputs(baseline)
+        auto = size_buffer(daily_in_paisa=daily_in, swing_paisa=swing, trading_days=trading_days,
+                           standard_paisa=self.standard_buffer)
+        chosen = self.session.get(BufferSetting, self.shop_id)
+        return owner_buffer(chosen.buffer_paisa, chosen.set_at, auto) if chosen else auto
+
+    def safety_buffer(self) -> SafetyBuffer:
+        """Today's buffer for the shop: the owner's own amount, else sized from the books."""
+        _, _, baseline, trading_days = self._history(local_date(self.clock.now()))
+        return self._resolve_buffer(baseline, trading_days)
+
+    def set_buffer(self, amount_paisa: int | None) -> SafetyBuffer:
+        """The owner's own buffer; None goes back to the automatic one."""
+        chosen = self.session.get(BufferSetting, self.shop_id)
+        if amount_paisa is None:
+            if chosen is not None:
+                self.session.delete(chosen)
+        elif chosen is None:
+            self.session.add(BufferSetting(shop_id=self.shop_id, buffer_paisa=amount_paisa, set_at=self.clock.now()))
+        else:
+            chosen.buffer_paisa, chosen.set_at = amount_paisa, self.clock.now()
+        self.session.flush()
+        return self.safety_buffer()
 
     @staticmethod
     def _doubtful(profile, today: date) -> bool:
@@ -254,11 +311,9 @@ class ForecastService:
         now = self.clock.now()
         today = local_date(now)
         end = today + timedelta(days=days - 1)
-        shop = self.shops.get(self.shop_id)
-        shop_type = shop.shop_type if shop else "grocery"
-        since = shop.data_since if shop else today - timedelta(days=HISTORY_DAYS)
-        bill_categories = {b.category for b in self.ledger.recurring_bills(self.shop_id)}
-        baseline = self._baseline(today, shop_type, since, bill_categories)
+        shop_type, bill_categories, baseline, trading_days = self._history(today)
+        buffer = self._resolve_buffer(baseline, trading_days)
+        self.buffer = buffer.amount_paisa
         items = self._items(today, end)
         profiles = self.ledger.repayment_profiles(self.shop_id, today)
         start = sum(self.ledger.balances(self.shop_id).values())
@@ -280,10 +335,11 @@ class ForecastService:
         suggestions = self._suggest(today, end, projection, shortfall, lowest, profiles, baseline, run) \
             if shortfall else []
         return CashForecast(
-            as_of=now, days_ahead=days, start_balance_paisa=start, buffer_paisa=self.buffer, days=projection,
+            as_of=now, days_ahead=days, start_balance_paisa=start, buffer_paisa=self.buffer, buffer=buffer,
+            days=projection,
             first_shortfall=shortfall, lowest_day=lowest.day, lowest_balance_paisa=lowest.balance_paisa,
             suggestions=suggestions, headline=self._headline(days, shortfall, lowest),
-            method=self._method(baseline, items, doubtful),
+            method=self._method(baseline, items, doubtful, buffer),
         )
 
     @staticmethod
@@ -375,7 +431,8 @@ class ForecastService:
                   "Ask me \"can I get a loan?\" to see your options.")))
         return suggestions
 
-    def _method(self, baseline: Baseline, items: list[ForecastItem], doubtful: list) -> list[str]:
+    def _method(self, baseline: Baseline, items: list[ForecastItem], doubtful: list,
+                buffer: SafetyBuffer) -> list[str]:
         weekday_sales = ", ".join(f"{WEEKDAYS[w][:3]} {fmt_taka(_whole(baseline.sales_in[w]))}" for w in range(7))
         cycles = sorted({i.counterparty for i in items if i.kind == "expected_supplier_bill"})
         lines = [
@@ -386,12 +443,13 @@ class ForecastService:
             "Known amounts: open bills and supplier credit, recurring bills, and payments you scheduled.",
             f"Baki coming back: the average of the last 4 weeks, about {fmt_taka(_whole(baseline.baki_in))} a day.",
             "The low/high band is an 80% range.",
+            f"Safety buffer {fmt_taka(buffer.amount_paisa)}: {buffer.explanation}",
         ]
         if cycles:
             lines.insert(3, "Regular credit suppliers' next bills projected from their own delivery cycle and credit "
                             f"terms: {', '.join(cycles)}.")
         if doubtful:
             total = sum(p.outstanding_paisa for p in doubtful)
-            lines.insert(-1, f"Not counted: {fmt_taka(total)} of baki owed for over {DOUBTFUL_DAYS} days "
+            lines.insert(-2, f"Not counted: {fmt_taka(total)} of baki owed for over {DOUBTFUL_DAYS} days "
                              f"({', '.join(p.name for p in doubtful)}).")
         return lines

@@ -6,8 +6,19 @@ import { ForecastChart } from "../components/ForecastChart";
 import { dayLabel, taka } from "../format";
 import { useData } from "../hooks";
 import { useApp } from "../state";
-import type { CashForecast } from "../types";
+import type { CashForecast, SafetyBuffer } from "../types";
 import { Amount, Badge, Button, Card, Loading, Marker, Note, Page, PageHeader, Segmented, Stat, tdClass, thClass } from "../ui";
+
+/** Where the buffer came from, in a few words: the full reason is in the Method list below. */
+function bufferHint(buffer: SafetyBuffer): string {
+  if (buffer.mode === "owner") {
+    return buffer.auto_paisa !== null ? `set by you · auto ${taka(buffer.auto_paisa, true)}` : "set by you";
+  }
+  if (buffer.mode === "auto" && buffer.swing_ratio !== null) {
+    return `sized from your shop · ${Math.round(buffer.swing_ratio * 100)}% daily swing`;
+  }
+  return "standard, until 2 weeks of sales";
+}
 
 export function ForecastTab() {
   const { version, toast, refresh } = useApp();
@@ -77,7 +88,7 @@ export function ForecastTab() {
           hint={dayLabel(data.lowest_day)}
           tone={data.lowest_balance_paisa < 0 ? "bad" : undefined}
         />
-        <Stat label="Safety buffer" value={<Amount paisa={data.buffer_paisa} />} hint="the least you want on hand" />
+        <Stat label="Safety buffer" value={<Amount paisa={data.buffer_paisa} />} hint={bufferHint(data.buffer)} />
       </div>
 
       <Card

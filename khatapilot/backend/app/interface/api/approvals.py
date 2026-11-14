@@ -56,6 +56,24 @@ def approve(pending_id: str, body: ApproveRequest, container=Depends(get_contain
         return result
 
 
+class RemoveRequest(BaseModel):
+    customer_name: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/{pending_id}/remove", response_model=ApprovalResult)
+def remove(pending_id: str, body: RemoveRequest, container=Depends(get_container),
+           _owner: Sender = Depends(require_owner)) -> ApprovalResult:
+    """Take one customer out of held baki reminders (the Approve dialog's x beside their name)."""
+    request_id = new_id("req")
+    with container.db.session() as session:
+        approvals = Guard(session, container.guard_deps).approvals
+        view = approvals.get(pending_id)
+        result = approvals.remove_reminder(pending_id, body.customer_name, request_id=request_id)
+        if result.status == "rejected":
+            _tell_chat(container, session, view, result, request_id)
+        return result
+
+
 @router.post("/{pending_id}/reject", response_model=ApprovalResult)
 def reject(pending_id: str, container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> ApprovalResult:
     request_id = new_id("req")

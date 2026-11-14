@@ -28,3 +28,19 @@ class ReminderRecord(Base):
     failure: Mapped[str | None] = mapped_column(Text, default=None)
     decision_id: Mapped[str] = mapped_column(String(48))
     sent_at: Mapped[datetime]
+
+
+class ReminderOptOut(Base):
+    """A customer who gets no baki reminders: they replied STOP, or asked the owner, who recorded it.
+
+    A customer's own STOP can only be lifted by the customer (replying START); the owner can lift only an
+    opt-out the owner recorded. No row: reminders allowed."""
+
+    __tablename__ = "reminder_opt_outs"
+
+    shop_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    number: Mapped[str] = mapped_column(String(16), primary_key=True)  # normalized 8801XXXXXXXXX
+    customer_name: Mapped[str | None] = mapped_column(String(128), default=None)
+    source: Mapped[str] = mapped_column(String(12))  # customer | owner
+    words: Mapped[str | None] = mapped_column(String(160), default=None)  # what the customer replied
+    opted_out_at: Mapped[datetime]

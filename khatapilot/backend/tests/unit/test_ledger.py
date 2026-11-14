@@ -86,6 +86,25 @@ def test_baki_is_repaid_oldest_first(db, clock):
     ]
 
 
+def test_the_earliest_promise_on_open_baki_is_when_it_is_expected(db, clock):
+    day = timedelta(days=1)
+    with db.session() as session:
+        ledger = LedgerService(session, clock)
+        ledger.add_entry(entry(kind="baki_sale", method="credit", amount=50_000, counterparty_name="Jamal Uddin",
+                               at=DEMO_NOW - 10 * day, due_date=date(2026, 10, 9)))
+        ledger.add_entry(entry(kind="baki_sale", method="credit", amount=30_000, counterparty_name="Jamal Uddin",
+                               at=DEMO_NOW - 8 * day, due_date=date(2026, 10, 20)))
+        ledger.add_entry(entry(kind="baki_sale", method="credit", amount=10_000, counterparty_name="Rina Begum",
+                               at=DEMO_NOW - 1 * day))
+        before = {b.name: b.expected_by for b in ledger.baki_by_customer(SHOP, today=date(2026, 10, 12))}
+        # Paying off the first purchase settles the promise that went with it.
+        ledger.add_entry(entry(kind="baki_repayment", amount=50_000, counterparty_name="Jamal Uddin",
+                               at=DEMO_NOW - 1 * day))
+        after = {b.name: b.expected_by for b in ledger.baki_by_customer(SHOP, today=date(2026, 10, 12))}
+    assert before == {"Jamal Uddin": date(2026, 10, 9), "Rina Begum": None}
+    assert after == {"Jamal Uddin": date(2026, 10, 20), "Rina Begum": None}
+
+
 def test_the_same_sms_cannot_be_booked_twice(db, clock):
     with db.session() as session:
         ledger = LedgerService(session, clock)
@@ -93,3 +112,19 @@ def test_the_same_sms_cannot_be_booked_twice(db, clock):
         assert ledger.has_trx(SHOP, "BJ71K2ABCD")
         with pytest.raises(IntegrityError):
             ledger.add_entry(entry(method="bkash", trx_id="BJ71K2ABCD"))
+
+
+def test_forgiven_baki_counts_as_never_repaid_in_the_repayment_profile(db, clock):
+    day = timedelta(days=1)
+    with db.session() as session:
+        ledger = LedgerService(session, clock)
+        ledger.add_entry(entry(kind="baki_sale", method="credit", amount=50_000, counterparty_name="Rina Begum",
+                               at=DEMO_NOW - 60 * day))
+        ledger.add_entry(entry(kind="baki_adjustment", direction="out", method="credit", amount=50_000,
+                               counterparty_name="Rina Begum", category="Baki forgiven", at=DEMO_NOW - 1 * day))
+        [profile] = ledger.repayment_profiles(SHOP, date(2026, 10, 12))
+        balances = ledger.baki_by_customer(SHOP, today=date(2026, 10, 12))
+        books = ledger.book_days(SHOP, date(2026, 10, 10), date(2026, 10, 12))
+    assert balances == []
+    assert (profile.outstanding_paisa, profile.repaid_paisa, profile.repaid_share) == (0, 0, 0.0)
+    assert books[-1].baki_outstanding == 0 and books[-1].sales_baki == 0

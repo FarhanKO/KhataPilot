@@ -53,13 +53,15 @@ def db(tmp_path, clock):
             ledger.add_entry(entry(day, "sale", "in", 10_000))
             ledger.add_entry(entry(day, "purchase", "out", 9_000, category="Stock"))
         ledger.add_entry(entry(SINCE, "opening_balance", "out", 56_000, category="Opening balance", hour=8))
+        # These tests are about the projection, so they pin the buffer the way an owner would.
+        ForecastService(session, clock, SHOP, standard_buffer_paisa=BUFFER).set_buffer(BUFFER)
     yield database
     database.dispose()
 
 
 def run(db, clock, days: int = 14):
     with db.session() as session:
-        return ForecastService(session, clock, SHOP, buffer_paisa=BUFFER).forecast(days)
+        return ForecastService(session, clock, SHOP, standard_buffer_paisa=BUFFER).forecast(days)
 
 
 def add(db, clock, *entries: NewLedgerEntry) -> None:

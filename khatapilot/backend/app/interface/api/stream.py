@@ -48,5 +48,8 @@ async def trace_stream(request: Request, replay: int = Query(default=100, ge=0, 
                 idle = 0.0
                 yield _sse(event)
 
+    # "identity" keeps compressing proxies (vite preview, which serves the web app) from gzipping the stream:
+    # gzip holds events back until its buffer fills, so the trace would stop being live.
     return StreamingResponse(events(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
+                                      "Content-Encoding": "identity"})

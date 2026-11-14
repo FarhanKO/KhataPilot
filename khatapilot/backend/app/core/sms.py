@@ -132,3 +132,39 @@ def split_pasted_sms(message: str) -> tuple[str, str | None]:
     if parse_sms(candidate) is None:
         return message, None
     return message[:start.start()].strip(), candidate.strip()
+
+
+# ---- who sent it: a provider's own sender ID, or a personal number
+
+# The sender IDs the providers use for account notifications. A real bKash notification comes from "bKash";
+# the commonest scam against shopkeepers is the same text sent from an ordinary 01X number. Matched without
+# case, spaces or punctuation, so "BRAC BANK" and "BRACBANK" are the same.
+PROVIDER_SENDERS: dict[str, frozenset[str]] = {
+    "bkash": frozenset({"bkash"}),
+    "nagad": frozenset({"nagad"}),
+    "bank": frozenset({"dbbl", "dbblrocket", "16216", "bracbank", "citybank", "thecitybank", "ebl", "ebl365",
+                       "ibbl", "islamibank", "sonalibank", "janatabank", "agranibank", "primebank", "mtb",
+                       "mutualtrust", "ucb", "ucbl", "dhakabank", "bankasia", "pubalibank", "southeastbank",
+                       "standardchartered", "scbank", "hsbcbd", "ificbank", "onebank", "trustbank", "nccbank",
+                       "jamunabank", "mercantilebank", "premierbank", "shahjalalbank", "alarafah", "exim",
+                       "eximbank", "nrbc", "midlandbank", "communitybank", "bkb"}),
+}
+_PERSONAL = re.compile(r"^\+?(?:88)?0?1[3-9]\d{8}$")
+
+
+def sender_key(sender: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", normalize_digits(sender or "").lower())
+
+
+def sender_provider(sender: str, extra: dict[str, set[str]] | None = None) -> str | None:
+    """The provider whose own sender ID this is ("bkash", "nagad", "bank"), or None."""
+    key = sender_key(sender)
+    for provider, ids in PROVIDER_SENDERS.items():
+        if key in ids or key in (extra or {}).get(provider, set()):
+            return provider
+    return None
+
+
+def is_personal_number(sender: str) -> bool:
+    """An ordinary mobile number (anyone can send from one), as opposed to a provider's sender ID."""
+    return bool(_PERSONAL.match(re.sub(r"[\s-]", "", normalize_digits(sender or ""))))

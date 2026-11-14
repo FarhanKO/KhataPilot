@@ -1,0 +1,4 @@
+# Optional: offline voice-to-text for the chat's mic (python scripts/get_voice_model.py downloads the model).
+# Without it the app uses the browser's own speech recognition. Tested on Windows 11, Python 3.13, CPU only.
+faster-whisper==1.2.1
+av==19.0.2

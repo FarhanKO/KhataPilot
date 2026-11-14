@@ -15,7 +15,8 @@ interface PinAction {
 
 const METHOD_NAMES: Record<string, string> = { bkash: "bKash", nagad: "Nagad", bank: "Bank" };
 
-/** Owner-only controls. None of these exist as chat tools: they need the owner here, with the PIN. */
+/** Owner-only controls. Chat can propose limit, payee and block-list changes, but they wait in the
+ * approval pop-up (with the PIN where this screen asks for one); the PIN and resume stay here only. */
 export function ControlsTab() {
   const { status, refresh, toast } = useApp();
   const [action, setAction] = useState<PinAction | null>(null);
@@ -59,7 +60,7 @@ export function ControlsTab() {
       <PageHeader
         eyebrow="Limits & payees"
         title="Rules only you can change"
-        description="These controls live here, behind your PIN. The chat assistant cannot change limits, trusted payees or the PIN, whatever anyone types."
+        description="These controls live here, behind your PIN. You can also ask in chat (“set my per payment limit to 20,000”, “block 019…”): the change waits in a pop-up until you confirm, with your PIN for limits and payees. The PIN itself is changed only here."
       />
       {status.pin.locked && (
         <Note tone="bad" title="PIN locked">

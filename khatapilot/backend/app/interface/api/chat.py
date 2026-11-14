@@ -5,7 +5,9 @@ Before any model is involved, this layer:
 - handles "stop" itself, deterministically, so the kill switch never depends on the model;
 - refuses to store or forward a bare 4-6 digit number (it looks like a PIN), or a message that names
   a PIN, OTP or password next to a 4-6 digit number ("my pin is 4821"); the number is removed and the
-  model never sees the message.
+  model never sees the message;
+- for a customer's SMS that is only "STOP" (or "START") in answer to a baki reminder, records that they
+  want no more reminders (or want them again), deterministically, and tells the owner.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+from dataclasses import replace
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path
@@ -31,6 +34,7 @@ from app.guard.owner_controls import OwnerControls
 from app.guard.service import Guard
 from app.interface.deps import get_container, require_owner
 from app.modules.chat.service import ChatService, ConversationSummary, ShownMessage
+from app.modules.reminders.service import reply_choice
 
 router = APIRouter(tags=["chat"])
 
@@ -101,6 +105,9 @@ class ChatResponse(BaseModel):
     quarantine: list[dict] = []
     kill_switch: bool = False
     model: str = ""
+    # Who planned the reply. "guard": this layer answered before any planner ("stop", a PIN in chat).
+    route: Literal["model", "rules", "offline", "capped", "guard"] = "guard"
+    route_reason: str = ""
 
 
 def _normal(text: str) -> str:
@@ -128,8 +135,10 @@ def _trace_turn(container, turn: TurnContext) -> None:
     })
 
 
-def _trace_reply(container, request_id: str, text: str, *, kill_switch: bool = False) -> None:
-    container.trace.publish({"type": "reply", "request_id": request_id, "text": text, "kill_switch": kill_switch})
+def _trace_reply(container, request_id: str, text: str, *, kill_switch: bool = False, route: str = "guard",
+                 route_reason: str = "") -> None:
+    container.trace.publish({"type": "reply", "request_id": request_id, "text": text, "kill_switch": kill_switch,
+                             "route": route, "route_reason": route_reason})
 
 
 def _owner_turn(container, request_id: str, owner: Sender, text: str) -> TurnContext:
@@ -145,8 +154,12 @@ def _run_agent(container, turn: TurnContext, *, conversation_id: str, user_displ
         history = [HistoryMessage(role=m.role, content=m.content)
                    for m in ChatService(session, container.clock, container.settings.shop_id).history(conversation_id)]
         shop = Guard(session, container.guard_deps).shops.get(container.settings.shop_id)
+    budget = container.budget
     reply = container.agent.handle(turn, history=history, port=container.tool_port(),
-                                   shop_name=shop.name if shop else "the shop", on_event=container.trace.publish)
+                                   shop_name=shop.name if shop else "the shop", on_event=container.trace.publish,
+                                   capped=budget.capped() if budget else None)
+    if budget:
+        budget.record_turn(reply.route)
     _remember(container, conversation_id, turn.request_id, reply.rendered_user, user_display, sender, reply.text,
               forwarded=forwarded, outcomes=reply.outcomes)
     decisions = {o.decision_id for o in reply.outcomes}
@@ -154,10 +167,11 @@ def _run_agent(container, turn: TurnContext, *, conversation_id: str, user_displ
         guard = Guard(session, container.guard_deps)
         pending = [p for p in guard.approvals.pending() if p.decision_id in decisions]
         frozen = guard.store.kill_switch().frozen
-    _trace_reply(container, turn.request_id, reply.text, kill_switch=frozen)
+    _trace_reply(container, turn.request_id, reply.text, kill_switch=frozen, route=reply.route,
+                 route_reason=reply.route_reason)
     return ChatResponse(
         conversation_id=conversation_id, request_id=turn.request_id, reply=reply.text, outcomes=reply.outcomes,
-        pending=pending, kill_switch=frozen, model=reply.model,
+        pending=pending, kill_switch=frozen, model=reply.model, route=reply.route, route_reason=reply.route_reason,
         quarantine=[{"block": q.block, "kind": q.kind, "summary": q.describe(), "suspected": q.injection.suspected}
                     for q in reply.quarantine],
     )
@@ -247,14 +261,59 @@ def read_photo(body: PhotoRequest, container=Depends(get_container),
         image = base64.b64decode(body.image_base64, validate=True)
     except binascii.Error as exc:
         raise HTTPException(422, "The photo did not arrive intact. Please try again.") from exc
+    provider = container.provider
+    capped = container.budget.capped() if container.budget else None
+    if capped and container.agent.rules is not None:
+        provider = container.agent.rules  # the month's AI budget is spent: the offline reader only
     try:
-        reading = read_invoice_photo(container.provider, image)
+        try:
+            reading = read_invoice_photo(provider, image)
+        except LLMError as exc:
+            agent = container.agent
+            if not (agent.offline_fallback and exc.transient):
+                raise
+            provider = agent.rules  # offline: it reads the demo's sample photos, nothing else
+            reading = read_invoice_photo(provider, image)
+            reading = replace(reading, message=f"{exc} Offline mode read this instead. {reading.message}")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except LLMError as exc:
         raise HTTPException(503, str(exc)) from exc
     return PhotoResponse(readable=reading.readable, text=reading.text, truncated=reading.truncated,
-                         message=reading.message, model=container.provider.model)
+                         message=reading.message, model=provider.model)
+
+
+def _reminder_reply(container, number: str, sender: Sender, text: str, choice: str) -> ChatResponse | None:
+    """A customer's STOP or START, handled without the model. None: a START from someone who never
+    stopped reminders, which goes to the agent like any other message."""
+    request_id, conversation_id = new_id("req"), f"inbound-{number}"
+    with container.db.session() as session:
+        guard = Guard(session, container.guard_deps)
+        shop = guard.shops.get(container.settings.shop_id)
+        shop_name = shop.name if shop else "The shop"
+        who = guard.reminders.name_for(number) or sender.display
+        if choice == "stop":
+            guard.reminders.opt_out(number, source="customer", words=text)
+            reply = f"{shop_name}: you will get no more payment reminders by SMS. Reply START to get them again."
+            summary = f"No more reminders to {who}"
+            reason = (f"{who} replied \"{text.strip()[:60]}\". KhataPilot will not prepare or send them baki "
+                      "reminders; their baki stays in the books. Only they can turn reminders back on, by replying START.")
+        else:
+            if not guard.reminders.opt_in(number, source="customer"):
+                return None
+            reply = f"{shop_name}: payment reminders are on again. Reply STOP any time to stop them."
+            summary = f"Reminders back on for {who}"
+            reason = (f"{who} replied \"{text.strip()[:60]}\" and asked for baki reminders again. Each one still "
+                      "waits for your approval.")
+        guard.recorder.notify(request_id=request_id, channel="sms_gateway", summary=summary, reason=reason)
+    turn = TurnContext(request_id=request_id, conversation_id=conversation_id, shop_id=container.settings.shop_id,
+                       channel="sms_gateway", sender=sender,
+                       segments=(Segment(text=text, provenance=Provenance.UNTRUSTED, source="inbound_message"),),
+                       received_at=container.clock.now())
+    _trace_turn(container, turn)
+    _remember(container, conversation_id, request_id, text, text, f"external:{sender.display}", reply)
+    _trace_reply(container, request_id, reply)
+    return ChatResponse(conversation_id=conversation_id, request_id=request_id, reply=reply)
 
 
 @router.post("/sim/inbound", response_model=ChatResponse)
@@ -265,6 +324,10 @@ def inbound(body: InboundRequest, container=Depends(get_container), _owner: Send
     if number is None:
         raise HTTPException(422, "from_number must be a Bangladeshi mobile number.")
     sender = Sender(kind=SenderKind.EXTERNAL, display=mask_phone(number))
+    if body.channel == "sms_gateway" and (choice := reply_choice(body.text)):
+        answered = _reminder_reply(container, number, sender, body.text, choice)
+        if answered is not None:
+            return answered
     request_id = new_id("req")
     turn = TurnContext(request_id=request_id, conversation_id=f"inbound-{number}", shop_id=container.settings.shop_id,
                        channel=body.channel, sender=sender,

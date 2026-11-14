@@ -23,6 +23,7 @@ from app.agent.llm.types import (
 )
 from app.agent.prompts import SYSTEM_PROMPT, render_turn
 from app.agent.quarantine import QuarantineReport, quarantine
+from app.agent.routing import Route, choose
 from app.core.clock import local_date
 from app.core.provenance import Provenance, SenderKind, TurnContext
 from app.guard.api import ToolCall, ToolOutcome, ToolPort
@@ -42,6 +43,11 @@ class AgentReply:
     steps: int = 0
     model: str = ""
     stopped_early: bool = False
+    # Who planned the turn: "model" (the LLM), "rules" (the offline planner, chosen up front: no API cost),
+    # "offline" (the LLM could not be reached, so the offline planner answered instead) or "capped" (this
+    # month's AI budget is used up, so the offline planner answers until the month ends).
+    route: str = "model"
+    route_reason: str = ""
 
 
 def outcome_content(outcome: ToolOutcome) -> str:
@@ -53,16 +59,35 @@ def outcome_content(outcome: ToolOutcome) -> str:
 
 
 class Orchestrator:
-    def __init__(self, provider: LLMProvider, *, max_steps: int = 6) -> None:
+    """`rules` is the offline planner. When given, `rules_first` lets it take the plain turns
+    (app/agent/routing.py) and `offline_fallback` lets it answer when `provider` cannot be reached."""
+
+    def __init__(self, provider: LLMProvider, *, max_steps: int = 6, rules: LLMProvider | None = None,
+                 rules_first: bool = False, offline_fallback: bool = False) -> None:
         self.provider = provider
         self.max_steps = max_steps
+        self.rules = rules
+        self.rules_first = rules_first and rules is not None
+        self.offline_fallback = offline_fallback and rules is not None
+        # turns per route since start, for /llm/usage
+        self.routes = {"model": 0, "rules": 0, "offline": 0, "capped": 0}
 
     def handle(self, turn: TurnContext, *, history: list[HistoryMessage], port: ToolPort, shop_name: str,
-               on_event: EventSink | None = None) -> AgentReply:
-        emit = on_event or (lambda _event: None)
+               on_event: EventSink | None = None, capped: str | None = None) -> AgentReply:
+        """`capped`: why the model may not be used this turn (the month's budget is spent); the offline
+        planner then answers the whole turn, including reading forwarded invoices."""
+        reply = self._handle(turn, history=history, port=port, shop_name=shop_name,
+                             emit=on_event or (lambda _event: None),
+                             capped=capped if capped and self.rules is not None else None)
+        self.routes[reply.route] += 1
+        return reply
+
+    def _handle(self, turn: TurnContext, *, history: list[HistoryMessage], port: ToolPort, shop_name: str,
+                emit: EventSink, capped: str | None) -> AgentReply:
         owner_turn = turn.sender.kind is SenderKind.OWNER
         untrusted = [(i, s) for i, s in enumerate(turn.segments, start=1) if s.provenance is Provenance.UNTRUSTED]
-        reports = [quarantine(block, segment, self.provider) for block, segment in untrusted]
+        reader = self.rules if capped else self.provider
+        reports = [quarantine(block, segment, reader) for block, segment in untrusted]
         for report in reports:
             emit({"type": "quarantine", "request_id": turn.request_id, "block": report.block,
                   "kind": report.kind, "summary": report.describe(), "suspected": report.injection.suspected})
@@ -89,15 +114,36 @@ class Orchestrator:
             now=turn.received_at,
         )
         tools = [LLMTool(d.name, d.description, clean_schema(d.parameters)) for d in port.descriptors()]
-        session = self.provider.session(system=SYSTEM_PROMPT, tools=tools, history=history)
+        provider, route = self.provider, Route("model", "")
+        if capped:
+            provider, route = self.rules, Route("capped", capped)
+        elif self.rules_first:
+            route = choose(brief, history)
+            if route.planner == "rules":
+                provider = self.rules
+        session = provider.session(system=SYSTEM_PROMPT, tools=tools, history=history)
         session.user(rendered, brief)
 
-        reply = AgentReply(text="", rendered_user=rendered, quarantine=reports, model=self.provider.model)
-        for step in range(1, self.max_steps + 1):
+        reply = AgentReply(text="", rendered_user=rendered, quarantine=reports, model=provider.model,
+                           route=route.planner, route_reason=route.reason)
+        if self.rules_first or capped:
+            emit({"type": "llm_route", "request_id": turn.request_id, "route": route.planner, "reason": route.reason})
+        step = 0
+        while step < self.max_steps:
+            step += 1
             reply.steps = step
             try:
                 result = session.step()
             except LLMError as error:
+                # Fall back only before anything ran: a fresh planner would redo what the model already did.
+                if self.offline_fallback and error.transient and reply.route == "model" and not reply.outcomes:
+                    reply.route, reply.route_reason = "offline", str(error)
+                    emit({"type": "llm_route", "request_id": turn.request_id, "route": "offline",
+                          "reason": str(error)})
+                    session = self.rules.session(system=SYSTEM_PROMPT, tools=tools, history=history)
+                    session.user(rendered, brief)
+                    step = 0
+                    continue
                 reply.text = f"{error} Nothing was changed."
                 emit({"type": "llm_error", "request_id": turn.request_id, "message": str(error)})
                 return reply

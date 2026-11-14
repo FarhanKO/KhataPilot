@@ -1,7 +1,10 @@
-// Talking instead of typing. The browser's own speech recognition (Chrome, Edge, Safari) writes what the
-// owner says into the message box as they speak, while the microphone's level drives a small waveform
-// beside the mic. Nothing is sent until the owner presses send, so a misheard amount can be fixed first.
-// Browsers without speech recognition (Firefox) simply get no mic button.
+// Talking instead of typing. While the owner speaks, the browser's own speech recognition (Chrome, Edge,
+// Safari) writes a quick draft into the message box and the microphone's level drives a small waveform.
+// The same speech is also recorded; when the owner taps pause, the recording is turned into text on the
+// shop's own computer by an offline Whisper model that knows the shop's customer and supplier names and
+// Banglish words (POST /api/voice/transcribe), and its better text replaces the draft. It works with no
+// internet, and in browsers without speech recognition (Firefox) too. Nothing is sent until the owner
+// presses send, so a misheard amount can be fixed first.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -22,6 +25,7 @@ type RecognizerClass = new () => Recognizer;
 const Recognition: RecognizerClass | undefined =
   (window as unknown as { SpeechRecognition?: RecognizerClass }).SpeechRecognition ??
   (window as unknown as { webkitSpeechRecognition?: RecognizerClass }).webkitSpeechRecognition;
+const CAN_RECORD = typeof window !== "undefined" && "MediaRecorder" in window && !!navigator.mediaDevices?.getUserMedia;
 
 const BANGLA = /[ঀ-৿]/;
 export const LANG_NAMES: Record<string, string> = { "bn-BD": "Bangla", "en-IN": "English" };
@@ -36,13 +40,31 @@ export function chooseLang(recent: string): "bn-BD" | "en-IN" {
   return navigator.languages?.some((l) => l.toLowerCase().startsWith("bn")) ? "bn-BD" : "en-IN";
 }
 
+/** The recording format the browser can make: webm/opus in Chrome, Edge and Firefox, mp4 in Safari. */
+export function recordingType(): string | undefined {
+  if (!CAN_RECORD) return undefined;
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"].find((t) =>
+    MediaRecorder.isTypeSupported?.(t),
+  );
+}
+
 const ERRORS: Record<string, string> = {
   "not-allowed": "Allow the microphone for this page to talk instead of typing.",
   "service-not-allowed": "Allow the microphone for this page to talk instead of typing.",
   "audio-capture": "No microphone was found.",
-  network: "Speech recognition needs the internet. Please type instead.",
+  network: "The browser's speech service needs the internet; your words are still being written from the recording.",
   "language-not-supported": "This browser cannot listen in that language. Please type instead.",
 };
+
+// Asked once per page load: can the shop's computer turn speech into text?
+let serverCheck: Promise<boolean> | null = null;
+function serverCanTranscribe(): Promise<boolean> {
+  serverCheck ??= fetch("/api/voice")
+    .then((r) => (r.ok ? r.json() : { server: false }))
+    .then((j: { server?: boolean }) => Boolean(j.server))
+    .catch(() => false);
+  return serverCheck;
+}
 
 interface Options {
   text: string; // the message box now
@@ -51,26 +73,71 @@ interface Options {
   recent: string; // the owner's recent messages, to choose the language
 }
 
+interface Session {
+  recognizer?: Recognizer;
+  recorder?: MediaRecorder;
+  chunks: Blob[];
+  stream?: MediaStream;
+  context?: AudioContext;
+  frame?: number;
+  keep: boolean; // false: dropped (sent while listening), so the recording is not transcribed
+}
+
 export function useVoice({ text, onText, onError, recent }: Options) {
   const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [server, setServer] = useState(false);
   const [lang, setLang] = useState<string>("en-IN");
   const level = useRef(0); // 0..1, read by the waveform every frame without re-rendering
   const latest = useRef({ text, onText, onError, recent });
   latest.current = { text, onText, onError, recent };
-  const session = useRef<{ recognizer: Recognizer; stream?: MediaStream; context?: AudioContext; frame?: number } | null>(
-    null,
-  );
+  const session = useRef<Session | null>(null);
+  const before = useRef(""); // the message box before this recording, kept in front of what is heard
+
+  useEffect(() => {
+    let alive = true;
+    void serverCanTranscribe().then((ok) => alive && setServer(ok && Boolean(recordingType())));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** The recording, turned into text on the shop's computer; its text replaces the browser's draft. */
+  const transcribe = useCallback(async (blob: Blob, chosen: string) => {
+    if (blob.size < 2000) return; // a tap, not speech
+    setTranscribing(true);
+    try {
+      const response = await fetch(`/api/voice/transcribe?lang=${chosen.startsWith("bn") ? "bn" : "en"}`, {
+        method: "POST",
+        headers: { "Content-Type": blob.type || "application/octet-stream" },
+        body: blob,
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail ?? response.statusText);
+      const heard = ((await response.json()) as { text: string }).text.trim();
+      if (heard) latest.current.onText([before.current, heard].filter(Boolean).join(" "));
+    } catch (e) {
+      // The browser's draft stays; say so only if there is none.
+      if (latest.current.text.trim() === before.current.trim())
+        latest.current.onError(`I could not write that down (${e instanceof Error ? e.message : e}). Please try again or type.`);
+    } finally {
+      setTranscribing(false);
+    }
+  }, []);
 
   /** Stop listening and let go of the microphone. The words stay in the message box. */
   const end = useCallback((how: "stop" | "abort") => {
     const s = session.current;
     if (!s) return;
     session.current = null;
-    s.recognizer.onend = null;
-    if (how === "stop") s.recognizer.stop();
-    else s.recognizer.abort();
+    s.keep = how === "stop";
+    if (s.recognizer) {
+      s.recognizer.onend = null;
+      if (how === "stop") s.recognizer.stop();
+      else s.recognizer.abort();
+    }
+    if (s.recorder && s.recorder.state !== "inactive") s.recorder.stop(); // its onstop sends the recording
     if (s.frame) cancelAnimationFrame(s.frame);
-    s.stream?.getTracks().forEach((t) => t.stop());
+    if (!s.recorder) s.stream?.getTracks().forEach((t) => t.stop());
     void s.context?.close().catch(() => undefined);
     level.current = 0;
     setListening(false);
@@ -78,48 +145,65 @@ export function useVoice({ text, onText, onError, recent }: Options) {
   const stop = useCallback(() => end("stop"), [end]);
 
   const start = useCallback(() => {
-    if (!Recognition || session.current) return;
+    if (session.current || transcribing || (!Recognition && !server)) return;
     const chosen = chooseLang(`${latest.current.recent} ${latest.current.text}`);
     setLang(chosen);
-    const before = latest.current.text.trimEnd();
-    let heard = "";
-    const recognizer = new Recognition();
-    recognizer.lang = chosen;
-    recognizer.continuous = true;
-    recognizer.interimResults = true;
-    recognizer.onresult = (event) => {
-      let pending = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const phrase = event.results[i][0].transcript;
-        if (event.results[i].isFinal) heard = `${heard} ${phrase}`.trim();
-        else pending += phrase;
-      }
-      latest.current.onText([before, `${heard} ${pending}`.trim()].filter(Boolean).join(" "));
-    };
-    recognizer.onerror = (event) => {
-      if (event.error === "no-speech" || event.error === "aborted") return;
-      latest.current.onError(ERRORS[event.error] ?? "I could not hear that. Please try again or type.");
-    };
-    recognizer.onend = () => end("abort"); // the browser stopped listening by itself (a long silence)
-    session.current = { recognizer };
+    before.current = latest.current.text.trimEnd();
+    const s: Session = { chunks: [], keep: true };
+    session.current = s;
     setListening(true);
-    try {
-      recognizer.start();
-    } catch {
-      end("abort");
-      return;
+
+    if (Recognition) {
+      let heard = "";
+      const recognizer = new Recognition();
+      recognizer.lang = chosen;
+      recognizer.continuous = true;
+      recognizer.interimResults = true;
+      recognizer.onresult = (event) => {
+        let pending = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const phrase = event.results[i][0].transcript;
+          if (event.results[i].isFinal) heard = `${heard} ${phrase}`.trim();
+          else pending += phrase;
+        }
+        latest.current.onText([before.current, `${heard} ${pending}`.trim()].filter(Boolean).join(" "));
+      };
+      recognizer.onerror = (event) => {
+        if (event.error === "no-speech" || event.error === "aborted") return;
+        if (server && event.error === "network") return; // offline: the recording still becomes text
+        latest.current.onError(ERRORS[event.error] ?? "I could not hear that. Please try again or type.");
+      };
+      // The browser stopped by itself (a long silence): with a recording, finish it; without, just stop.
+      recognizer.onend = () => end(server ? "stop" : "abort");
+      s.recognizer = recognizer;
+      try {
+        recognizer.start();
+      } catch {
+        s.recognizer = undefined;
+      }
     }
 
-    // The same microphone, only for the waveform. If it is refused, recognition reports it.
+    // The microphone: for the waveform, and recorded for the shop's computer to write down.
     navigator.mediaDevices
-      ?.getUserMedia({ audio: true })
+      ?.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       .then((stream) => {
-        const s = session.current;
-        if (!s || s.recognizer !== recognizer) {
+        if (session.current !== s) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         s.stream = stream;
+        const type = recordingType();
+        if (server && type) {
+          const recorder = new MediaRecorder(stream, { mimeType: type, audioBitsPerSecond: 32_000 });
+          recorder.ondataavailable = (e) => e.data.size && s.chunks.push(e.data);
+          recorder.onstop = () => {
+            stream.getTracks().forEach((t) => t.stop());
+            if (s.keep) void transcribe(new Blob(s.chunks, { type }), chosen);
+          };
+          recorder.start(250);
+          s.recorder = recorder;
+          setTimeout(() => session.current === s && end("stop"), 60_000); // a minute at most
+        }
         s.context = new AudioContext();
         const analyser = s.context.createAnalyser();
         analyser.fftSize = 512;
@@ -134,13 +218,28 @@ export function useVoice({ text, onText, onError, recent }: Options) {
         };
         tick();
       })
-      .catch(() => undefined);
-  }, [end]);
+      .catch(() => {
+        if (!s.recognizer) {
+          latest.current.onError(ERRORS["not-allowed"]);
+          end("abort");
+        }
+      });
+  }, [end, server, transcribe, transcribing]);
 
   useEffect(() => () => end("abort"), [end]);
 
-  /** For sending: stop at once, keeping what was heard so far. */
+  /** For sending: stop at once, keeping what was heard so far (the recording is not written down). */
   const finish = useCallback(() => end("abort"), [end]);
 
-  return { supported: Boolean(Recognition), listening, lang, level, start, stop, finish };
+  return {
+    supported: Boolean(Recognition) || server,
+    server,
+    listening,
+    transcribing,
+    lang,
+    level,
+    start,
+    stop,
+    finish,
+  };
 }

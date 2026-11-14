@@ -1,9 +1,10 @@
 import { createContext, useContext } from "react";
 
-import type { ChatResponse, OwnerStatus, Pending, Shop, ToolOutcome } from "./types";
+import type { AlertsState } from "./alerts";
+import type { ChatResponse, OwnerStatus, Pending, Route, Shop, ToolOutcome } from "./types";
 import type { Tone } from "./ui";
 
-export type TabId = "chat" | "ledger" | "forecast" | "credit" | "loans" | "controls" | "audit" | "sandbox" | "trace";
+export type TabId = "chat" | "ledger" | "forecast" | "savings" | "credit" | "loans" | "controls" | "audit" | "sandbox" | "trace";
 
 export interface Forwarded {
   source: "forwarded_sms" | "invoice_text";
@@ -19,6 +20,8 @@ export interface ChatMessage {
   outcomes?: ToolOutcome[];
   pending?: Pending[];
   requestId?: string;
+  route?: Route;
+  routeReason?: string;
   at: string;
 }
 
@@ -39,6 +42,7 @@ export interface AppContextValue {
   openConversation: (id: string) => Promise<void>;
   review: (pendingId?: string) => void;
   toast: (text: string, tone?: Tone) => void;
+  alerts: AlertsState;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

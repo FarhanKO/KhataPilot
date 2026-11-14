@@ -1,7 +1,9 @@
-import { Bell, Moon, OctagonX, Sun } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bell, ClipboardCheck, Moon, OctagonX, Sun } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { priorityTone, useAlerts } from "./alerts";
 import { api, errorText } from "./api";
+import { AlertsDialog } from "./components/AlertsDialog";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { LogoMark } from "./components/Logo";
 import { AttackSimulator } from "./components/AttackSimulator";
@@ -13,22 +15,27 @@ import { TracePanel } from "./components/TracePanel";
 import { dateTimeLabel } from "./format";
 import { useData, useTrace } from "./hooks";
 import { AppContext, type AppContextValue, type ChatMessage, type Forwarded, type TabId } from "./state";
-import { AuditTab } from "./tabs/AuditTab";
 import { ChatTab } from "./tabs/ChatTab";
-import { ControlsTab } from "./tabs/ControlsTab";
-import { CreditTab } from "./tabs/CreditTab";
-import { ForecastTab } from "./tabs/ForecastTab";
-import { LedgerTab } from "./tabs/LedgerTab";
-import { LoansTab } from "./tabs/LoansTab";
-import { SandboxTab } from "./tabs/SandboxTab";
 import type { ChatResponse, OwnerStatus, Pending, Shop, ShownMessage } from "./types";
-import { Marker, type Tone } from "./ui";
+import { Loading, Marker, Page, type Tone } from "./ui";
+
+// Chat is the home screen and loads with the app; every other tab loads the first time it is opened,
+// so a phone on a slow connection downloads less before it can start.
+const AuditTab = lazy(() => import("./tabs/AuditTab").then((m) => ({ default: m.AuditTab })));
+const ControlsTab = lazy(() => import("./tabs/ControlsTab").then((m) => ({ default: m.ControlsTab })));
+const CreditTab = lazy(() => import("./tabs/CreditTab").then((m) => ({ default: m.CreditTab })));
+const ForecastTab = lazy(() => import("./tabs/ForecastTab").then((m) => ({ default: m.ForecastTab })));
+const LedgerTab = lazy(() => import("./tabs/LedgerTab").then((m) => ({ default: m.LedgerTab })));
+const LoansTab = lazy(() => import("./tabs/LoansTab").then((m) => ({ default: m.LoansTab })));
+const SandboxTab = lazy(() => import("./tabs/SandboxTab").then((m) => ({ default: m.SandboxTab })));
+const SavingsTab = lazy(() => import("./tabs/SavingsTab").then((m) => ({ default: m.SavingsTab })));
 
 const TABS: { id: TabId; label: string; narrowOnly?: boolean }[] = [
   { id: "chat", label: "Chat" },
   { id: "trace", label: "Trace", narrowOnly: true },
   { id: "ledger", label: "Ledger" },
   { id: "forecast", label: "Forecast" },
+  { id: "savings", label: "Savings" },
   { id: "credit", label: "Credit" },
   { id: "loans", label: "Loans" },
   { id: "controls", label: "Limits" },
@@ -84,6 +91,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState<{ open: boolean; id?: string }>({ open: false });
+  const [alertsOpen, setAlertsOpen] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; tone: Tone }[]>([]);
   const [theme, toggleTheme] = useTheme();
   const conversation = useRef(storedConversation());
@@ -109,6 +117,7 @@ export default function App() {
   }, []);
 
   // Re-read now and then: it carries the simulated clock, and a backend that was still starting gets picked up.
+  // These are the cadences while the live stream is down; while it is up they stretch to LIVE_POLL_MS (hooks.ts).
   const shop = useData<Shop>("/shop", [version], 15000);
   const status = useData<OwnerStatus>("/owner/status", [version], 5000);
   const pending = useData<Pending[]>("/approvals", [version], 4000);
@@ -132,11 +141,26 @@ export default function App() {
     }
   });
 
+  // Back from a dropped stream (a phone that slept, a backend restart): events may have been missed, so re-read.
+  const everConnected = useRef(false);
+  useEffect(() => {
+    if (!trace.connected) return;
+    if (everConnected.current) refresh();
+    everConnected.current = true;
+  }, [trace.connected, refresh]);
+
   const toast = useCallback((text: string, tone: Tone = "info") => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, tone }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
   }, []);
+
+  // New urgent or important alerts pop up wherever the owner is; the Alerts tab holds the full list.
+  const alerts = useAlerts(version, (fresh) => {
+    const top = fresh.find((i) => i.priority === "urgent") ?? fresh[0];
+    const more = fresh.length > 1 ? ` (+${fresh.length - 1} more in Alerts)` : "";
+    toast(`${top.title}${more}`, priorityTone(top) === "neutral" ? "info" : priorityTone(top));
+  });
 
   const sendChat = useCallback(
     async (message: string, forwarded: Forwarded[] = []): Promise<ChatResponse | null> => {
@@ -157,6 +181,8 @@ export default function App() {
             outcomes: response.outcomes,
             pending: response.pending,
             requestId: response.request_id,
+            route: response.route,
+            routeReason: response.route_reason,
             at: new Date().toISOString(),
           },
         ]);
@@ -188,6 +214,8 @@ export default function App() {
             text: response.reply,
             outcomes: response.outcomes,
             requestId: response.request_id,
+            route: response.route,
+            routeReason: response.route_reason,
             at: new Date().toISOString(),
           },
         ]);
@@ -226,6 +254,27 @@ export default function App() {
     [switchConversation],
   );
 
+  // An SMS shared into the installed app (Android: Share > KhataPilot) is booked like a pasted SMS: only what
+  // the provider confirms. The text leaves the address bar at once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shared = params.get("share_text") ?? params.get("share_title");
+    if (!shared) return;
+    params.delete("share_text");
+    params.delete("share_title");
+    window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}${window.location.hash}`);
+    api
+      .post<Record<string, number>>("/phone/import", { text: shared })
+      .then((r) => {
+        toast(r.booked ? "The shared SMS is in your books." : r.fake_sender ? "That SMS looks fake; it was not booked." :
+          r.duplicate || r.already_seen ? "That SMS is already in your books." : "That SMS could not be confirmed, so it was not booked.",
+          r.booked ? "ok" : "warn");
+        refresh();
+      })
+      .catch((e) => toast(errorText(e), "bad"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // A reload keeps the open chat on screen, not just in the model's memory.
   useEffect(() => {
     openConversation(conversation.current).catch(() => {
@@ -251,9 +300,10 @@ export default function App() {
       openConversation,
       review: (id?: string) => setReviewing({ open: true, id }),
       toast,
+      alerts,
     }),
     [shop.data, status.data, pending.data, version, refresh, tab, setTab, messages, sending, sendChat, sendInbound,
-      newConversation, conversationId, openConversation, toast],
+      newConversation, conversationId, openConversation, toast, alerts],
   );
 
   // Keep status and approvals fresh right after the version changes (they also poll on their own).
@@ -315,6 +365,20 @@ export default function App() {
                 {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
               </button>
               <button
+                aria-label={alerts.needsEye ? `Alerts, ${alerts.needsEye} unread` : "Alerts"}
+                aria-haspopup="dialog"
+                onClick={() => setAlertsOpen(true)}
+                className="relative inline-flex h-9 items-center gap-2 rounded-full border border-bar-line px-2.5 text-[13px] font-medium text-bar-ink/80 transition hover:border-bar-muted hover:text-bar-ink sm:px-3.5"
+              >
+                <Bell className="size-4" />
+                <span className="hidden sm:inline">Alerts</span>
+                {alerts.needsEye > 0 && (
+                  <span className="-mr-1 inline-block min-w-[18px] rounded-full bg-warn px-1 text-center font-mono text-[10.5px] leading-[18px] text-white">
+                    {alerts.needsEye}
+                  </span>
+                )}
+              </button>
+              <button
                 aria-label={waiting ? `${waiting} waiting for your approval` : "Approvals"}
                 onClick={() => setReviewing({ open: true })}
                 className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[13px] font-medium transition ${
@@ -329,7 +393,7 @@ export default function App() {
                     <span className="size-2 rounded-full bg-warn" />
                   </span>
                 ) : (
-                  <Bell className="size-4" />
+                  <ClipboardCheck className="size-4" />
                 )}
                 <span className="hidden sm:inline">{waiting ? `${waiting} waiting for you` : "Approvals"}</span>
                 {waiting > 0 && <span className="sm:hidden">{waiting}</span>}
@@ -378,26 +442,31 @@ export default function App() {
                 <TracePanel events={trace.events} connected={trace.connected} />
               </div>
             )}
-            {tab === "ledger" && <LedgerTab />}
-            {tab === "forecast" && <ForecastTab />}
-            {tab === "credit" && <CreditTab />}
-            {tab === "loans" && <LoansTab />}
-            {tab === "controls" && <ControlsTab />}
-            {tab === "audit" && <AuditTab />}
-            {tab === "sandbox" && <SandboxTab />}
+            <Suspense fallback={<Page><Loading /></Page>}>
+              {tab === "ledger" && <LedgerTab />}
+              {tab === "forecast" && <ForecastTab />}
+              {tab === "savings" && <SavingsTab />}
+              {tab === "credit" && <CreditTab />}
+              {tab === "loans" && <LoansTab />}
+              {tab === "controls" && <ControlsTab />}
+              {tab === "audit" && <AuditTab />}
+              {tab === "sandbox" && <SandboxTab />}
+            </Suspense>
           </main>
-          <aside className="hidden min-h-0 flex-col border-l border-line bg-raised/45 lg:flex">
+          <aside className="hidden min-h-0 flex-col border-l border-line-strong bg-trace lg:flex">
             <div className="border-b border-line px-4 pt-4 pb-3">
               <ProviderStrip />
             </div>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pt-5 pb-4">
               <TracePanel events={trace.events} connected={trace.connected} />
             </div>
-            <div className="border-t border-line bg-page px-4 py-4">
+            <div className="border-t border-line bg-trace-deep px-4 py-4">
               <AttackSimulator compact />
             </div>
           </aside>
         </div>
+
+        <AlertsDialog open={alertsOpen} onClose={() => setAlertsOpen(false)} />
 
         <ApprovalDialog
           open={reviewing.open}

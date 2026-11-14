@@ -48,11 +48,26 @@ class Suggestion(BaseModel):
     closes_gap: bool
 
 
+class SafetyBuffer(BaseModel):
+    """The least the owner wants on hand, and where that number came from."""
+
+    amount_paisa: int
+    mode: Literal["auto", "owner", "standard"]  # sized from the books, chosen by the owner, or too little history
+    explanation: str
+    auto_paisa: int | None  # what the automatic buffer is (shown even when the owner chose their own)
+    daily_in_paisa: int | None  # business size: money in on a usual day
+    swing_paisa: int | None  # how far a day typically lands from the usual for that weekday
+    swing_ratio: float | None  # swing / daily money in: the shop's up-and-down
+    steadiness: Literal["steady", "moderate", "choppy"] | None
+    set_at: datetime | None = None  # when the owner chose their own
+
+
 class CashForecast(BaseModel):
     as_of: datetime
     days_ahead: int
     start_balance_paisa: int
     buffer_paisa: int
+    buffer: SafetyBuffer
     days: list[ForecastDay]
     first_shortfall: Shortfall | None
     lowest_day: date

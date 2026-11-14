@@ -19,6 +19,12 @@ the payee check (known name, new number: PIN), a payment to anyone new needs the
 messages from anyone but the owner are blocked before the model is consulted. Small fee scams to new payees
 are nearly invisible to the model, which is exactly why the new-payee rule exists.
 
+The simulated data has no payments to a well-known payee at many times their usual amount (an extra zero, a
+"send the advance now" call), so the model alone scores them as normal. A fixed floor covers that: three or more
+past payments and at least five times the usual amount (and at least ৳1,000) scores 0.6 or more, so it needs
+the PIN; the rules fallback applies the same floor. No payment in this data meets it, so the numbers here are
+the model's own.
+
 ## By pattern (test window)
 
 | Pattern | Payments | Flagged (needs PIN) | Blocked | Rules baseline flagged |

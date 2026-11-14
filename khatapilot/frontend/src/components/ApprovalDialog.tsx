@@ -1,4 +1,4 @@
-import { AlertTriangle, Eye, EyeOff } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { api, errorText } from "../api";
@@ -42,7 +42,7 @@ interface Application {
   };
 }
 
-function Details({ item }: { item: Pending }) {
+function Details({ item, onRemove, removing }: { item: Pending; onRemove: (name: string) => void; removing: string | null }) {
   const [reveal, setReveal] = useState(false);
   const payment = item.action.payment;
   const application = (item.action.params?.application ?? null) as Application | null;
@@ -102,6 +102,7 @@ function Details({ item }: { item: Pending }) {
   const reminders = (item.action.params?.reminders ?? null) as ReminderDraft[] | null;
   if (reminders) {
     const skipped = (item.action.params?.skipped ?? []) as { name: string; why: string }[];
+    const removed = (item.action.params?.removed ?? []) as string[];
     const total = reminders.reduce((sum, r) => sum + r.owed_paisa, 0);
     return (
       <div className="space-y-3">
@@ -114,10 +115,22 @@ function Details({ item }: { item: Pending }) {
           <ul className="max-h-72 space-y-2.5 overflow-y-auto border-t border-dashed border-line-strong pt-3">
             {reminders.map((r) => (
               <li key={r.customer_name} className="text-sm">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
                   <span className="font-medium">{r.customer_name}</span>
-                  <span className="label text-faint">
-                    <span className="font-mono">{maskNumber(r.to_number)}</span> · {r.days_outstanding} days · <Amount paisa={r.owed_paisa} />
+                  <span className="flex items-center gap-2">
+                    <span className="label text-faint">
+                      <span className="font-mono">{maskNumber(r.to_number)}</span> · {r.days_outstanding} days · <Amount paisa={r.owed_paisa} />
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onRemove(r.customer_name)}
+                      disabled={removing !== null}
+                      aria-label={`Take ${r.customer_name} out of these reminders`}
+                      title={`Don't send this one: take ${r.customer_name} out`}
+                      className="inline-flex size-6 items-center justify-center rounded-full text-faint transition hover:bg-bad-soft hover:text-bad disabled:opacity-40"
+                    >
+                      <X className={`size-3.5 ${removing === r.customer_name ? "animate-pulse" : ""}`} />
+                    </button>
                   </span>
                 </div>
                 <p className="mt-1 rounded-lg bg-raised/60 px-3 py-2 text-[13px] text-muted">{r.body}</p>
@@ -128,11 +141,63 @@ function Details({ item }: { item: Pending }) {
         <Note tone="neutral" title="Written from your books">
           The names, numbers, amounts and words come from your ledger and a fixed template, not from the AI.
           {skipped.length > 0 && <> Not included: {skipped.map((s) => `${s.name} (${s.why})`).join("; ")}.</>}
+          {removed.length > 0 && <> You took out: {removed.join(", ")}.</>}
+          {reminders.length > 1 && <> Tap × beside a name to leave that customer out.</>}
         </Note>
       </div>
     );
   }
+  if (item.kind === "control.change" || item.kind === "control.block") return <SettingsChange item={item} />;
   return <p className="rounded-2xl border border-line bg-page p-5 text-sm">{item.summary}</p>;
+}
+
+const METHOD_NAMES: Record<string, string> = { bkash: "bKash", nagad: "Nagad", bank: "Bank account" };
+
+/** A change to the owner's own safety settings, asked for in chat. */
+function SettingsChange({ item }: { item: Pending }) {
+  const p = (item.action.params ?? {}) as Record<string, string | number | null>;
+  const money = (v: unknown) => (typeof v === "number" ? taka(v) : "unchanged");
+  const caption =
+    p.control === "limits" ? "Change your payment limits"
+    : p.control === "add_payee" ? "Add a trusted payee"
+    : p.control === "remove_payee" ? "Remove a trusted payee"
+    : "Block a number";
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-line bg-page px-5 pt-5 pb-3">
+        <div className="label pb-3 text-center text-faint">{caption}</div>
+        <dl className="border-t border-dashed border-line-strong pt-2">
+          {p.control === "limits" && (
+            <>
+              <Row label="Per payment">
+                {p.per_txn_paisa != null ? <>{money(p.per_txn_before_paisa)} → <b>{money(p.per_txn_paisa)}</b></> : "unchanged"}
+              </Row>
+              <Row label="Per day">
+                {p.daily_paisa != null ? <>{money(p.daily_before_paisa)} → <b>{money(p.daily_paisa)}</b></> : "unchanged"}
+              </Row>
+            </>
+          )}
+          {(p.control === "add_payee" || p.control === "remove_payee") && (
+            <>
+              <Row label="Name">{p.name}</Row>
+              <Row label="Number"><span className="font-mono">{maskNumber(String(p.number ?? ""))}</span></Row>
+              {p.method && <Row label="Paid by">{METHOD_NAMES[String(p.method)] ?? p.method}</Row>}
+            </>
+          )}
+          {p.control === "block" && (
+            <>
+              <Row label="Number"><span className="font-mono">{maskNumber(String(p.number ?? ""))}</span></Row>
+              <Row label="Reason">{p.reason}</Row>
+            </>
+          )}
+        </dl>
+      </div>
+      <Note tone="neutral" title="Asked for in chat">
+        You asked for this in chat. Nothing changes until you {item.requires_pin ? "confirm with your PIN" : "tap Approve"}{" "}
+        here; the PIN itself can only be changed in the Controls tab.
+      </Note>
+    </div>
+  );
 }
 
 export function ApprovalDialog({ open, focusId, pending, onClose, onDone }: {
@@ -158,6 +223,23 @@ export function ApprovalDialog({ open, focusId, pending, onClose, onDone }: {
   }, [open, focusId]);
 
   const item = pending.find((p) => p.id === selected) ?? pending[0];
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  /** Leave one customer out of held reminders; the rest stay exactly as shown. */
+  async function removeRecipient(name: string) {
+    if (!item) return;
+    setRemoving(name);
+    try {
+      const response = await api.post<ApprovalResult>(`/approvals/${item.id}/remove`, { customer_name: name });
+      toast(response.message, response.ok ? "info" : "bad");
+      onDone();
+      if (response.status === "rejected" && pending.length <= 1) onClose();
+    } catch (e) {
+      setResult({ tone: "bad", text: errorText(e) });
+    } finally {
+      setRemoving(null);
+    }
+  }
 
   async function decide(approve: boolean) {
     if (!item) return;
@@ -197,7 +279,9 @@ export function ApprovalDialog({ open, focusId, pending, onClose, onDone }: {
         ? "Send this application?"
         : item.kind === "message.send"
           ? "Send these reminders?"
-          : "Approve this action?";
+          : item.kind === "control.change" || item.kind === "control.block"
+            ? "Change this setting?"
+            : "Approve this action?";
 
   return (
     <Modal open={open} onClose={onClose} eyebrow="Waiting for your approval" title={title} wide>
@@ -229,7 +313,7 @@ export function ApprovalDialog({ open, focusId, pending, onClose, onDone }: {
               Expires {new Date(item.expires_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
-          <Details item={item} />
+          <Details item={item} onRemove={removeRecipient} removing={removing} />
           {item.warnings.length > 0 && (
             <div className="space-y-2">
               {item.warnings.map((w) => (

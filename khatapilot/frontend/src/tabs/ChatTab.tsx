@@ -2,7 +2,8 @@ import { ArrowRight, ArrowUp, Camera, Forward, Images, Plus, ShieldAlert, X } fr
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
-import { errorText } from "../api";
+import { api, errorText } from "../api";
+import { KhataThinking } from "../components/KhataThinking";
 import { PastChats } from "../components/PastChats";
 import { StatusIsland, type IslandTask } from "../components/StatusIsland";
 import { VoiceButton } from "../components/VoiceButton";
@@ -12,7 +13,7 @@ import { replyLines, type Span } from "../markdown";
 import { MAX_FORWARDED, readInvoicePhotos, SAMPLE_PHOTOS } from "../photo";
 import { LANG_NAMES, useVoice } from "../voice";
 import { useApp, type ChatMessage, type Forwarded, type TabId } from "../state";
-import type { CashForecast, DayTotals, Debtor } from "../types";
+import type { CashForecast, DayTotals, Debtor, Route, SmsAskData, SmsQuestion } from "../types";
 import { Amount, Badge, Button, Eyebrow, Marker, Segmented, Stat } from "../ui";
 
 const GROUPS: { label: string; items: string[] }[] = [
@@ -25,7 +26,64 @@ const GROUPS: { label: string; items: string[] }[] = [
 ];
 const SUGGESTIONS = GROUPS.flatMap((g) => g.items);
 
-const OUTCOME_TONE = { ok: "ok", held: "warn", blocked: "bad", error: "bad" } as const;
+const OUTCOME_TONE = { ok: "ok", held: "warn", blocked: "bad", error: "bad", asked: "warn" } as const;
+
+/** Money in from a customer who owes baki: the owner says what it is for, and only then is it booked. */
+function SmsAskCard({ ask }: { ask: SmsAskData }) {
+  const { version, refresh, toast } = useApp();
+  const questions = useData<SmsQuestion[]>("/sms-questions", [version]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const status = questions.data?.find((q) => q.id === ask.question_id)?.status;
+
+  async function answer(purpose: "baki" | "other") {
+    setBusy(purpose);
+    try {
+      const out = await api.post<{ message: string }>(`/sms-questions/${ask.question_id}/answer`, { purpose });
+      toast(out.message, "ok");
+    } catch (e) {
+      toast(errorText(e), "bad");
+    } finally {
+      setBusy(null);
+      refresh();
+    }
+  }
+
+  if (status && status !== "open") {
+    return (
+      <div className="flex max-w-[min(92%,38rem)] items-start gap-2 text-xs text-muted">
+        <Badge tone="ok">answered</Badge>
+        <span>
+          {ask.amount} from {ask.customer} was booked {status === "baki" ? "against their baki" : "as a sale"}.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="w-full max-w-[min(92%,38rem)] rounded-2xl border border-warn/40 bg-warn-soft p-4">
+      <div className="label flex items-center gap-1.5 text-[10.5px] text-warn">
+        <Marker tone="warn" />
+        What is this money for? · nothing booked yet
+      </div>
+      <div className="mt-1.5 text-[14.5px] font-medium">
+        {ask.amount} from {ask.customer}, who owes {ask.owes} of baki
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {ask.choices.map((c, i) => (
+          <Button
+            key={c.purpose}
+            variant={i === 0 ? "primary" : "secondary"}
+            size="sm"
+            busy={busy === c.purpose}
+            disabled={busy !== null || !questions.data}
+            onClick={() => answer(c.purpose)}
+          >
+            {c.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** The shop's numbers right now, from the same endpoints the Ledger and Forecast screens use. */
 function useToday() {
@@ -92,6 +150,30 @@ function TodayStrip() {
   );
 }
 
+/** Says when the model did NOT plan a reply: the offline rules took a plain request (no API cost), or
+ *  the model could not be reached and the offline planner stood in. Silent for the model and the guard. */
+function RouteTag({ route, reason }: { route?: Route; reason?: string }) {
+  if (route === "rules")
+    return (
+      <span className="text-ok" title={`Answered by the offline rules: ${reason ?? "a plain request"}. No API call was made.`}>
+        · rules · no API cost
+      </span>
+    );
+  if (route === "offline")
+    return (
+      <span className="text-warn" title={`${reason ?? "The AI service could not be reached."} The offline planner answered instead.`}>
+        · offline · AI unreachable
+      </span>
+    );
+  if (route === "capped")
+    return (
+      <span className="text-warn" title={`${reason ?? "This month's AI budget is used up."} No API call was made.`}>
+        · offline · AI budget used up
+      </span>
+    );
+  return null;
+}
+
 function Bubble({ message }: { message: ChatMessage }) {
   const { review, pending } = useApp();
   const waiting = new Set(pending.map((p) => p.id));
@@ -139,6 +221,7 @@ function Bubble({ message }: { message: ChatMessage }) {
       <span className="label flex items-center gap-1.5 text-[10px] text-faint">
         <Marker />
         KhataPilot · {timeLabel(message.at)}
+        <RouteTag route={message.route} reason={message.routeReason} />
       </span>
       {message.text && (
         <div className="max-w-[min(92%,38rem)] rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-3 text-[14.5px] leading-relaxed">
@@ -155,6 +238,9 @@ function Bubble({ message }: { message: ChatMessage }) {
           ))}
         </div>
       )}
+      {message.outcomes
+        ?.filter((o) => o.status === "asked" && (o.data as SmsAskData | null)?.question_id)
+        .map((o) => <SmsAskCard key={(o.data as SmsAskData).question_id} ask={o.data as SmsAskData} />)}
       {message.pending?.map((p) =>
         waiting.has(p.id) ? (
           <div key={p.id} className="w-full max-w-[min(92%,38rem)] rounded-2xl border border-warn/40 bg-warn-soft p-4">
@@ -442,6 +528,7 @@ export function ChatTab() {
   }
 
   async function submit() {
+    if (voice.transcribing) return; // the better text is on its way into the box
     voice.finish();
     const forwarded = forwardOpen
       ? drafts.filter((d) => d.text.trim()).map((d) => ({ source: d.source, text: d.text.trim() }))
@@ -474,11 +561,7 @@ export function ChatTab() {
               ))}
               {sending && (
                 <div className="flex items-center gap-3">
-                  <span className="typing inline-flex gap-1" aria-hidden>
-                    <span className="size-1.5 rounded-full bg-ink" />
-                    <span className="size-1.5 rounded-full bg-ink" />
-                    <span className="size-1.5 rounded-full bg-ink" />
-                  </span>
+                  <KhataThinking />
                   <span className="label text-[10.5px] text-muted">Thinking · the guard checks every step</span>
                 </div>
               )}
@@ -607,7 +690,7 @@ export function ChatTab() {
                 }}
                 rows={1}
                 aria-label="Message"
-                placeholder={voice.listening ? "Listening… speak now" : "Type or talk, or say “stop” to freeze everything…"}
+                placeholder={voice.transcribing ? "Writing down what you said…" : voice.listening ? "Listening… speak now" : "Type or talk, or say “stop” to freeze everything…"}
                 className="field-sizing-content block max-h-40 min-h-11 w-full resize-none bg-transparent px-2.5 py-2 text-[15px] outline-none placeholder:text-faint focus-visible:outline-none"
               />
               <div className="flex items-center gap-1 pt-1">
@@ -630,13 +713,14 @@ export function ChatTab() {
                   {voice.supported && (
                     <VoiceButton
                       listening={voice.listening}
+                      transcribing={voice.transcribing}
                       level={voice.level}
                       language={LANG_NAMES[voice.lang] ?? "English"}
                       onStart={voice.start}
                       onStop={voice.stop}
                     />
                   )}
-                  <Button type="submit" variant="primary" size="icon" busy={sending} aria-label="Send">
+                  <Button type="submit" variant="primary" size="icon" busy={sending} disabled={voice.transcribing} aria-label="Send">
                     {!sending && <ArrowUp className="size-4" />}
                   </Button>
                 </div>

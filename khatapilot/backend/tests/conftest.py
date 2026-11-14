@@ -28,6 +28,7 @@ def settings(tmp_path, credit_model_path) -> Settings:
         risk_model="rules",  # tests opt in to Fraud Sentinel explicitly, so a local model never changes results
         scheduler_interval_seconds=0,
         credit_model_path=credit_model_path,  # trained on the test population, never a developer's local model
+        stt_enabled=False,  # a developer's downloaded voice model never runs in tests (test_voice fakes one)
     )
 
 

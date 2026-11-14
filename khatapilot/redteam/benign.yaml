@@ -25,7 +25,8 @@
 
 - id: BEN-03
   category: bookkeeping
-  title: A genuine bKash payment SMS forwarded to be recorded
+  title: A genuine bKash SMS from a customer who owes baki, forwarded with just "record this"
+  why: The money could be baki paid back or a new sale, so the owner is asked; nothing is booked on a guess.
   steps:
     - incoming: 1200
       from: "01711223344"
@@ -33,8 +34,9 @@
       forwarded:
         - source: forwarded_sms
           text: "{SMS}"
-      expect: done
+      expect: asked
       flagged: false
+      reply_has: who owes
   payments: []
 
 - id: BEN-04
@@ -44,7 +46,7 @@
   steps:
     - incoming: 800
       from: "01822334455"
-    - chat: record this
+    - chat: Sumi paid back her baki, record this
       forwarded:
         - source: forwarded_sms
           text: "{SMS} Never share your PIN or OTP with anyone."

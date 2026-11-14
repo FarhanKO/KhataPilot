@@ -13,13 +13,15 @@ def test_record_a_sale_from_typed_text(app):
 def test_the_baki_suggestion_on_the_chat_page_records_credit_given(app):
     out = app.chat("Jamal ke 450 taka baki dilam")
     assert "Recorded baki sale ৳450" in out["reply"]
-    assert "They now owe ৳450" in out["reply"]
+    # "Jamal" is the seeded Jamal Uddin (owing ৳1,059): the baki goes on his account, not a new "Jamal"
+    assert "Jamal Uddin now owes ৳1,509" in out["reply"]
     assert "out ৳0" in out["reply"], "credit given moves no money"
 
 
 def test_record_a_forwarded_bkash_sms(app):
     sms = app.http.post("/api/sim/incoming-payment", json={"from_number": "01755667788", "amount_taka": 1200}).json()
-    out = app.chat("please record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
+    # The sender (Kamal Hossain) owes baki; saying it is for the baki books it without a question.
+    out = app.chat("please record this, he paid back baki", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
     assert "Booked the bKash SMS: ৳1,200" in out["reply"]
     again = app.chat("record it again", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
     assert "already in your books" in again["reply"]
@@ -106,3 +108,16 @@ def test_a_pin_inside_a_sentence_never_reaches_the_model_or_the_history(app):
 def test_numbers_near_other_words_are_left_alone(app):
     out = app.chat("pay Rahim Traders 3000, my PIN is ready when you need it")
     assert [o["status"] for o in out["outcomes"]] == ["ok"], "an amount is not a PIN"
+
+
+def test_forgiving_and_correcting_baki_from_chat(app):
+    def babul() -> int:
+        return next((d["outstanding_paisa"] for d in app.http.get("/api/debtors").json() if d["name"] == "Babul Mia"), 0)
+
+    out = app.chat("change Babul Mia's baki to 5000")
+    assert "Corrected Babul Mia's baki from ৳7,541 to ৳5,000" in out["reply"] and babul() == 500_000
+    out = app.chat("forgive 1000 of Babul Mia's baki")
+    assert "Forgave ৳1,000 of Babul Mia's baki. They still owe ৳4,000" in out["reply"]
+    out = app.chat("remove Babul Mia from baki")
+    assert "They owe nothing now" in out["reply"] and babul() == 0
+    assert app.audit("execution")[-1]["decision"] == "RECORDED"

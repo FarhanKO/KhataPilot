@@ -125,7 +125,7 @@ def test_the_application_is_prefilled_from_the_profile_and_masks_the_phone():
 def test_submission_needs_a_token_that_binds_this_exact_application():
     d = draft()
     signer = CapabilitySigner(b"k" * 48)
-    loans = LoansService(None, None, "rahman-store", credit=None, sandbox=None, buffer_paisa=0)
+    loans = LoansService(None, None, "rahman-store", credit=None, sandbox=None, standard_buffer_paisa=0)
     bigger = d.model_copy(update={"amount_paisa": d.amount_paisa * 10})
     token_for_bigger = signer.mint(kind=LOAN_KIND, params=loans.auth_params(bigger), idempotency_key="k1", tier=1,
                                    decision_id="dec_1")

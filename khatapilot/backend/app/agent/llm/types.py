@@ -3,6 +3,7 @@ SDK types internally."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Literal, Protocol
@@ -10,8 +11,32 @@ from typing import Any, Literal, Protocol
 from app.guard.api import ToolOutcome
 
 
+# Told about every call to the model as it returns: (the model that answered, its token usage). The app
+# uses it to meter each shop's monthly spend; a broken listener never breaks the call.
+UsageListener = Callable[[str, dict[str, int]], None]
+
+
+def report_usage(listener: UsageListener | None, model: str, usage: dict[str, int]) -> None:
+    if listener is None:
+        return
+    try:
+        listener(model, usage)
+    except Exception:  # metering must never break a turn
+        import logging
+
+        logging.getLogger(__name__).exception("usage listener failed")
+
+
 class LLMError(Exception):
-    """The model could not be reached or answered with an error. The message is safe to show the owner."""
+    """The model could not be reached or answered with an error. The message is safe to show the owner.
+
+    `transient` marks a failure that says nothing about the setup (no network, a timeout, the service
+    busy or down), so the offline planner may answer instead. A bad key or model name is not transient:
+    falling back would only hide a mistake the owner has to fix."""
+
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 @dataclass(frozen=True)

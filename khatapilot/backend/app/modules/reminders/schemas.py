@@ -56,6 +56,20 @@ class ReminderView(BaseModel):
     outcome: Outcome
 
 
+class OptOutView(BaseModel):
+    customer_name: str | None
+    number_masked: str
+    source: Literal["customer", "owner"]
+    words: str | None
+    since: datetime
+    # who can turn reminders back on: the customer (by replying START) or the owner too
+    owner_can_lift: bool
+
+
+class OptOutLocked(Exception):
+    """The customer asked for no reminders themselves; only they can turn them back on."""
+
+
 class NothingToRemind(Exception):
     """No customer fits the request (nobody owes that long, an unknown name, no number on file)."""
 

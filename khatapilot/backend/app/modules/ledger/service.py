@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections import defaultdict, deque
 from collections.abc import Iterable
@@ -12,16 +13,19 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import Clock, local_date
 from app.core.ids import new_id
-from app.modules.ledger.models import LedgerEntry, Obligation, RecurringBill
+from app.modules.ledger.models import LedgerEntry, Obligation, RecurringBill, SmsQuestion
 from app.core.sms import ParsedSms
 from app.modules.ledger.categories import categorize  # noqa: F401  (re-exported: part of the public API)
-from app.modules.ledger.schemas import (
+from app.modules.ledger.schemas import (  # AmbiguousBill is re-exported: callers catch it
     CASHFLOW_EXCLUDED_KINDS,
+    AmbiguousBill,
     LIQUID_METHODS,
     BookDay,
     BookedSms,
     CustomerBalance,
     DailyFlow,
+    SmsPurpose,
+    SmsQuestionView,
     DayTotals,
     DuplicateSms,
     RepaymentProfile,
@@ -31,8 +35,22 @@ from app.modules.ledger.schemas import (
     NewObligation,
     ObligationView,
     RecurringBillView,
+    SAVINGS_CATEGORY,
 )
 from app.modules.shop.service import ShopService
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+# Entries that change what customers owe. A baki_adjustment is the owner forgiving baki or correcting it:
+# "out" lowers what the customer owes, "in" raises it. It is method "credit": no money moves.
+BAKI_KINDS = ("baki_sale", "baki_repayment", "baki_adjustment")
+
+
+def raises_baki(kind: str, direction: str) -> bool:
+    return kind == "baki_sale" or (kind == "baki_adjustment" and direction == "in")
 
 
 class LedgerService:
@@ -62,9 +80,21 @@ class LedgerService:
             self.session.execute(insert(LedgerEntry), rows)
         return len(rows)
 
-    def book_sms(self, shop_id: str, sms: ParsedSms, *, at: datetime, source_ref: str | None) -> BookedSms:
+    def debtor_for_sms(self, shop_id: str, sms: ParsedSms) -> CustomerBalance | None:
+        """The customer who owes baki and sent this money in, if there is one (matched by number)."""
+        if sms.direction != "in" or sms.txn_type == "cash_in":
+            return None
+        customer = ShopService(self.session, self.clock).find_party_by_number(
+            shop_id, sms.counterparty_number, kind="customer")
+        if customer is None:
+            return None
+        return next((b for b in self.baki_by_customer(shop_id) if b.name == customer.name), None)
+
+    def book_sms(self, shop_id: str, sms: ParsedSms, *, at: datetime, source_ref: str | None,
+                 purpose: SmsPurpose = "auto") -> BookedSms:
         """Book a parsed notification SMS. Deterministic: money from a customer who owes baki is a
-        baki repayment, otherwise a sale; money to a known supplier settles their payable; cash in and
+        baki repayment (unless `purpose` says it is for something else; anything over what they owe
+        is a sale), otherwise a sale; money to a known supplier settles their payable; cash in and
         cash out are transfers between the drawer and the wallet; fees are an expense."""
         if self.has_trx(shop_id, sms.trx_id):
             raise DuplicateSms(sms.trx_id)
@@ -80,18 +110,16 @@ class LedgerService:
         customer = shops.find_party_by_number(shop_id, sms.counterparty_number, kind="customer")
         supplier = shops.find_party_by_number(shop_id, sms.counterparty_number, kind="supplier") or (
             shops.find_party(shop_id, sms.counterparty_name, kind="supplier") if sms.counterparty_name else None)
-        outstanding, settled = None, []
+        outstanding, settled, over = None, [], 0
 
         if sms.direction == "in" and sms.txn_type != "cash_in":
-            owes = customer and next((b for b in self.baki_by_customer(shop_id) if b.name == customer.name), None)
-            kind = "baki_repayment" if owes else "sale"
-            add(kind=kind, direction="in", method=method, amount_paisa=sms.amount_paisa,
-                category="Baki collected" if owes else "Sales",
-                counterparty_name=customer.name if customer else sms.counterparty_name,
-                counterparty_number=sms.counterparty_number, trx_id=sms.trx_id, note=sms.reference)
-            if owes:
-                after = next((b for b in self.baki_by_customer(shop_id) if b.name == customer.name), None)
-                outstanding = after.outstanding_paisa if after else 0
+            booked = self.book_customer_payment(
+                shop_id, name=customer.name if customer else sms.counterparty_name,
+                number=sms.counterparty_number, amount_paisa=sms.amount_paisa, method=method,
+                purpose="other" if purpose == "other" or customer is None else "baki", occurred_at=when,
+                source="sms", source_ref=source_ref, trx_id=sms.trx_id, note=sms.reference)
+            entries += booked.entries
+            kind, outstanding, over = booked.kind, booked.customer_outstanding_paisa, booked.over_baki_paisa
             who = customer.name if customer else sms.counterparty_number
         elif sms.txn_type in ("cash_in", "cash_out"):
             kind, wallet_in = "transfer", sms.txn_type == "cash_in"
@@ -117,7 +145,94 @@ class LedgerService:
             add(kind="expense", direction="out", method=method, amount_paisa=sms.fee_paisa,
                 category="Mobile money fees", note=f"Fee for {sms.trx_id}")
         return BookedSms(kind=kind, entries=entries, counterparty=who, customer_outstanding_paisa=outstanding,
-                         settled_payables=settled)
+                         settled_payables=settled, over_baki_paisa=over)
+
+    # ---- money in from a customer: against their baki, or a sale
+
+    def debtors_matching(self, shop_id: str, name: str) -> list[CustomerBalance]:
+        """Customers who owe baki and whom `name` can mean: the exact name, else every one whose name has
+        all of its words ("Babul" finds "Babul Mia"). More than one is for the caller to ask about."""
+        wanted = _norm(name)
+        owing = self.baki_by_customer(shop_id)
+        exact = [b for b in owing if _norm(b.name) == wanted]
+        if exact or not wanted:
+            return exact
+        words = wanted.split()
+        return [b for b in owing if all(w in _norm(b.name).split() for w in words)]
+
+    def book_customer_payment(self, shop_id: str, *, name: str | None, number: str | None, amount_paisa: int,
+                              method: str, purpose: SmsPurpose, occurred_at: datetime, source: str,
+                              source_ref: str | None, trx_id: str | None = None, note: str | None = None) -> BookedSms:
+        """Money a customer gave the shop. Against their baki unless `purpose` is "other": up to what they owe,
+        and anything over that is a sale. Someone who owes nothing (or "other") is a sale. `name` must already be
+        the customer's name as the books have it."""
+        owes = None
+        if purpose != "other" and name:
+            owes = next((b for b in self.baki_by_customer(shop_id) if b.name == name), None)
+        entries: list[LedgerEntryView] = []
+
+        def add(**fields) -> None:
+            entries.append(self.add_entry(NewLedgerEntry(
+                shop_id=shop_id, occurred_at=occurred_at, source=source, source_ref=source_ref, direction="in",
+                method=method, counterparty_name=name, counterparty_number=number, **fields)))
+
+        repaid = min(amount_paisa, owes.outstanding_paisa) if owes else amount_paisa
+        add(kind="baki_repayment" if owes else "sale", amount_paisa=repaid,
+            category="Baki collected" if owes else "Sales", trx_id=trx_id, note=note)
+        over = 0
+        if owes and amount_paisa > repaid:  # paid more than they owed: the rest is a sale
+            over = amount_paisa - repaid
+            add(kind="sale", amount_paisa=over, category="Sales",
+                note=f"Rest of TrxID {trx_id}, over the baki owed" if trx_id else "The part over the baki owed")
+        outstanding = None
+        if owes:
+            after = next((b for b in self.baki_by_customer(shop_id) if b.name == name), None)
+            outstanding = after.outstanding_paisa if after else 0
+        return BookedSms(kind="baki_repayment" if owes else "sale", entries=entries, counterparty=name,
+                         customer_outstanding_paisa=outstanding, over_baki_paisa=over)
+
+    def ask_about_typed(self, shop_id: str, *, debtor: CustomerBalance, amount_paisa: int, method: str,
+                        request_id: str | None, conversation_id: str | None,
+                        decision_id: str | None) -> SmsQuestionView:
+        """Money the owner typed in from a customer who owes baki, held unbooked like a forwarded SMS."""
+        row = SmsQuestion(id=new_id("smsq"), shop_id=shop_id, request_id=request_id, conversation_id=conversation_id,
+                          decision_id=decision_id, trx_id="", sms_text="", customer_name=debtor.name,
+                          owed_paisa=debtor.outstanding_paisa, amount_paisa=amount_paisa, created_at=self.clock.now(),
+                          source="typed", method=method)
+        self.session.add(row)
+        self.session.flush()
+        return SmsQuestionView.model_validate(row)
+
+    # ---- money in from a customer who owes: held until the owner says what it is for
+
+    def ask_about_sms(self, shop_id: str, *, sms_text: str, sms: ParsedSms, debtor: CustomerBalance,
+                      request_id: str | None, conversation_id: str | None,
+                      decision_id: str | None) -> SmsQuestionView:
+        """Hold this SMS unbooked. Forwarding the same SMS again while it is waiting reuses the question."""
+        open_one = self.session.scalar(select(SmsQuestion).where(
+            SmsQuestion.shop_id == shop_id, SmsQuestion.trx_id == sms.trx_id, SmsQuestion.status == "open"))
+        if open_one is None:
+            open_one = SmsQuestion(id=new_id("smsq"), shop_id=shop_id, request_id=request_id,
+                                   conversation_id=conversation_id, decision_id=decision_id,
+                                   trx_id=sms.trx_id, sms_text=sms_text, customer_name=debtor.name,
+                                   owed_paisa=debtor.outstanding_paisa, amount_paisa=sms.amount_paisa,
+                                   created_at=self.clock.now())
+            self.session.add(open_one)
+            self.session.flush()
+        return SmsQuestionView.model_validate(open_one)
+
+    def sms_question(self, shop_id: str, question_id: str) -> SmsQuestion | None:
+        row = self.session.get(SmsQuestion, question_id)
+        return row if row is not None and row.shop_id == shop_id else None
+
+    def sms_questions(self, shop_id: str, limit: int = 50) -> list[SmsQuestionView]:
+        query = (select(SmsQuestion).where(SmsQuestion.shop_id == shop_id)
+                 .order_by(SmsQuestion.created_at.desc()).limit(limit))
+        return [SmsQuestionView.model_validate(q) for q in self.session.scalars(query)]
+
+    def mark_answered(self, row: SmsQuestion, purpose: SmsPurpose) -> None:
+        row.status, row.answered_at = purpose, self.clock.now()
+        self.session.flush()
 
     def has_trx(self, shop_id: str, trx_id: str) -> bool:
         query = select(func.count()).select_from(LedgerEntry).where(
@@ -130,6 +245,60 @@ class LedgerService:
         self.session.add(row)
         self.session.flush()
         return ObligationView.model_validate(row)
+
+    # ---- bills the owner manages from chat
+
+    def find_open_bill(self, shop_id: str, name: str, *, due_date: date | None = None) -> ObligationView | None:
+        """The open bill the owner means by `name` ("Meghna" for "Meghna Distributors"): the same name first,
+        then a name starting with it, then a name or note containing it as whole words. `due_date` picks
+        between bills of one payee. None when nothing fits; AmbiguousBill when more than one still does."""
+        wanted = _norm(name)
+        if not wanted:
+            return None
+        rows = [o for o in self.open_obligations(shop_id) if due_date is None or o.due_date == due_date]
+        for fits in (lambda o: _norm(o.counterparty_name) == wanted,
+                     lambda o: _norm(o.counterparty_name).startswith(wanted),
+                     lambda o: f" {wanted} " in f" {_norm(o.counterparty_name)} {_norm(o.note or '')} "):
+            matches = [o for o in rows if fits(o)]
+            if len(matches) == 1:
+                return matches[0]
+            if matches:
+                raise AmbiguousBill(name, matches)
+        return None
+
+    def update_obligation(self, shop_id: str, obligation_id: str, *, amount_paisa: int | None = None,
+                          due_date: date | None = None, priority: bool | None = None) -> ObligationView:
+        row = self._open_obligation(shop_id, obligation_id)
+        if amount_paisa is not None:
+            row.amount_paisa = amount_paisa
+        if due_date is not None:
+            row.due_date = due_date
+        if priority is not None:
+            row.priority = priority
+        self.session.flush()
+        return ObligationView.model_validate(row)
+
+    def reduce_obligation(self, shop_id: str, obligation_id: str, paid_paisa: int) -> ObligationView:
+        """Part (or all) of a bill was paid: lower what is left, and settle it when nothing is."""
+        row = self._open_obligation(shop_id, obligation_id)
+        row.amount_paisa = max(0, row.amount_paisa - paid_paisa)
+        if row.amount_paisa == 0:
+            row.status, row.settled_at = "settled", self.clock.now()
+        self.session.flush()
+        return ObligationView.model_validate(row)
+
+    def cancel_obligation(self, shop_id: str, obligation_id: str) -> ObligationView:
+        """The owner removed the bill. Kept as cancelled (not deleted) so the audit trail still makes sense."""
+        row = self._open_obligation(shop_id, obligation_id)
+        row.status, row.settled_at = "cancelled", self.clock.now()
+        self.session.flush()
+        return ObligationView.model_validate(row)
+
+    def _open_obligation(self, shop_id: str, obligation_id: str) -> Obligation:
+        row = self.session.get(Obligation, obligation_id)
+        if row is None or row.shop_id != shop_id or row.status != "open":
+            raise LookupError(f"no open bill {obligation_id}")
+        return row
 
     def add_recurring_bill(self, shop_id: str, name: str, payee: str, category: str, amount_paisa: int,
                            day_of_month: int, method: str) -> RecurringBillView:
@@ -149,8 +318,28 @@ class LedgerService:
         query = query.order_by(LedgerEntry.occurred_at.desc(), LedgerEntry.id.desc()).limit(limit).offset(offset)
         return [LedgerEntryView.model_validate(r) for r in self.session.scalars(query)]
 
-    def count(self, shop_id: str) -> int:
-        return self.session.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.shop_id == shop_id))
+    def count(self, shop_id: str, *, day: date | None = None) -> int:
+        query = select(func.count()).select_from(LedgerEntry).where(LedgerEntry.shop_id == shop_id)
+        if day is not None:
+            query = query.where(LedgerEntry.local_date == day)
+        return self.session.scalar(query)
+
+    def entry_days(self, shop_id: str, day: date | None = None) -> tuple[date | None, date | None, date | None]:
+        """(day, newer, older): the day itself and its nearest neighbours that have entries.
+
+        With no `day`, the latest day with entries up to today, or failing that the earliest after it.
+        """
+        in_shop = LedgerEntry.shop_id == shop_id
+        if day is None:
+            today = local_date(self.clock.now())
+            day = self.session.scalar(select(func.max(LedgerEntry.local_date)).where(in_shop, LedgerEntry.local_date <= today))
+            if day is None:
+                day = self.session.scalar(select(func.min(LedgerEntry.local_date)).where(in_shop))
+            if day is None:
+                return None, None, None
+        newer = self.session.scalar(select(func.min(LedgerEntry.local_date)).where(in_shop, LedgerEntry.local_date > day))
+        older = self.session.scalar(select(func.max(LedgerEntry.local_date)).where(in_shop, LedgerEntry.local_date < day))
+        return day, newer, older
 
     def day_totals(self, shop_id: str, day: date) -> DayTotals:
         rows = self.session.scalars(
@@ -186,23 +375,26 @@ class LedgerService:
         return balances
 
     def baki_by_customer(self, shop_id: str, today: date | None = None) -> list[CustomerBalance]:
-        """Outstanding customer credit, oldest unpaid purchase first-in-first-out."""
+        """Outstanding customer credit, oldest unpaid purchase first-in-first-out. A baki sale's
+        `due_date` is the day the customer promised to pay it back; the earliest promise on what is
+        still open becomes `expected_by`."""
         today = today or local_date(self.clock.now())
         rows = self.session.execute(
             select(LedgerEntry.counterparty_name, LedgerEntry.counterparty_number, LedgerEntry.kind,
-                   LedgerEntry.amount_paisa, LedgerEntry.local_date)
-            .where(LedgerEntry.shop_id == shop_id, LedgerEntry.kind.in_(("baki_sale", "baki_repayment")))
+                   LedgerEntry.direction, LedgerEntry.amount_paisa, LedgerEntry.local_date, LedgerEntry.due_date)
+            .where(LedgerEntry.shop_id == shop_id, LedgerEntry.kind.in_(BAKI_KINDS))
             .order_by(LedgerEntry.occurred_at)
         ).all()
         queues: dict[str, deque[list]] = defaultdict(deque)
         numbers: dict[str, str | None] = {}
-        for name, number, kind, amount, day in rows:
+        for name, number, kind, direction, amount, day, due in rows:
             key = name or number or "Unknown"
             numbers.setdefault(key, number)
             queue = queues[key]
-            if kind == "baki_sale":
-                queue.append([day, amount])
+            if raises_baki(kind, direction):
+                queue.append([day, amount, due])
                 continue
+            # A repayment, or the owner forgiving or correcting baki down: the oldest open baki goes first.
             while amount > 0 and queue:
                 take = min(amount, queue[0][1])
                 queue[0][1] -= take
@@ -215,9 +407,11 @@ class LedgerService:
             if outstanding <= 0:
                 continue
             oldest = queue[0][0]
+            promises = [item[2] for item in queue if item[2] is not None]
             balances.append(CustomerBalance(
                 name=name, number=numbers.get(name), outstanding_paisa=outstanding,
                 oldest_open_since=oldest, days_outstanding=(today - oldest).days,
+                expected_by=min(promises) if promises else None,
             ))
         return sorted(balances, key=lambda b: -b.outstanding_paisa)
 
@@ -296,6 +490,8 @@ class LedgerService:
                 flow.supplier_payments += amount
             elif kind == "expense" and category in bill_categories:
                 flow.bills_paid += amount
+            elif kind == "owner_drawing" and category == SAVINGS_CATEGORY:
+                flow.savings += amount
             elif kind == "owner_drawing":
                 flow.owner_drawings += amount
             elif (kind == "purchase" and method != "credit") or kind in ("expense", "other_out"):
@@ -329,6 +525,8 @@ class LedgerService:
             elif kind == "baki_repayment":
                 book.baki_collected += amount
                 baki -= amount
+            elif kind == "baki_adjustment":  # forgiven or corrected by the owner: no sale, no money
+                baki += amount if direction == "in" else -amount
             elif kind == "purchase":
                 book.purchases += amount
                 if method == "credit":
@@ -364,6 +562,15 @@ class LedgerService:
             carry = book
         return list(days.values())
 
+    def category_totals(self, shop_id: str, start: date, end: date) -> list[tuple[str, str, str, int]]:
+        """(kind, method, category, total paisa) for entries from `start` to `end` inclusive."""
+        rows = self.session.execute(
+            select(LedgerEntry.kind, LedgerEntry.method, LedgerEntry.category,
+                   func.coalesce(func.sum(LedgerEntry.amount_paisa), 0))
+            .where(LedgerEntry.shop_id == shop_id, LedgerEntry.local_date >= start, LedgerEntry.local_date <= end)
+            .group_by(LedgerEntry.kind, LedgerEntry.method, LedgerEntry.category)).all()
+        return [(kind, method, category or "", int(total)) for kind, method, category, total in rows]
+
     def categories_paid(self, shop_id: str, start: date, end: date) -> set[str]:
         """Expense categories with at least one payment between `start` and `end` (to avoid double-counting bills)."""
         rows = self.session.scalars(
@@ -376,21 +583,29 @@ class LedgerService:
         """How each credit customer actually repays: speed (amount-weighted days) and reliability."""
         rows = self.session.execute(
             select(LedgerEntry.counterparty_name, LedgerEntry.counterparty_number, LedgerEntry.kind,
-                   LedgerEntry.amount_paisa, LedgerEntry.local_date)
-            .where(LedgerEntry.shop_id == shop_id, LedgerEntry.kind.in_(("baki_sale", "baki_repayment")))
+                   LedgerEntry.direction, LedgerEntry.amount_paisa, LedgerEntry.local_date)
+            .where(LedgerEntry.shop_id == shop_id, LedgerEntry.kind.in_(BAKI_KINDS))
             .order_by(LedgerEntry.occurred_at)
         ).all()
         matured_before = today - timedelta(days=45)
         state: dict[str, dict] = {}
-        for name, number, kind, amount, day in rows:
+        for name, number, kind, direction, amount, day in rows:
             key = name or number or "Unknown"
             s = state.setdefault(key, {"number": number, "queue": deque(), "given": 0, "repaid": 0,
                                        "weighted_days": 0.0, "matured_given": 0, "matured_repaid": 0})
-            if kind == "baki_sale":
+            if raises_baki(kind, direction):
                 s["queue"].append([day, amount, amount])  # date, remaining, original
                 s["given"] += amount
                 if day < matured_before:
                     s["matured_given"] += amount
+                continue
+            if kind == "baki_adjustment":  # forgiven, not repaid: it leaves the queue but counts as never paid
+                while amount > 0 and s["queue"]:
+                    take = min(amount, s["queue"][0][1])
+                    s["queue"][0][1] -= take
+                    amount -= take
+                    if s["queue"][0][1] == 0:
+                        s["queue"].popleft()
                 continue
             s["repaid"] += amount
             while amount > 0 and s["queue"]:

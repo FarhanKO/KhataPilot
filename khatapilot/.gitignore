@@ -36,3 +36,10 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# Archify diagrams (generated locally)
+.archify/
+
+# Playwright output (scripts/run_e2e.py)
+frontend/test-results/
+frontend/playwright-report/

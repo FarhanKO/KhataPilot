@@ -17,6 +17,15 @@ RAMADAN_FACTOR = {"grocery": 1.2, "tea_stall": 0.6}
 PRE_EID_FACTOR = {"grocery": 1.3, "mobile_recharge": 1.35}
 
 
+def next_stock_up(after: date) -> tuple[str, date] | None:
+    """The next Eid a shop stocks up for, and the day the stocking starts (Ramadan for Eid-ul-Fitr, ten
+    days before Eid-ul-Adha), the first one starting after `after`; None past the dates known here."""
+    starts = [("Eid-ul-Fitr", ramadan_start) for ramadan_start, _ in RAMADAN]
+    starts += [("Eid-ul-Adha", eid - timedelta(days=10)) for eid in EID_ADHA]
+    ahead = sorted((day, name) for name, day in starts if day > after)
+    return (ahead[0][1], ahead[0][0]) if ahead else None
+
+
 def sales_factor(shop_type: str, day: date) -> tuple[float, str | None]:
     """Multiplier on an ordinary day's sales, and the reason (None for an ordinary day)."""
     for eid in EID_FITR + EID_ADHA:

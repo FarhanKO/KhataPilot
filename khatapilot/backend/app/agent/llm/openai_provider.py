@@ -8,7 +8,17 @@ from typing import Any
 
 import openai
 
-from app.agent.llm.types import HistoryMessage, LLMError, LLMStep, LLMTool, LLMToolCall, ToolResult, TurnBrief
+from app.agent.llm.types import (
+    HistoryMessage,
+    LLMError,
+    LLMStep,
+    LLMTool,
+    LLMToolCall,
+    ToolResult,
+    TurnBrief,
+    UsageListener,
+    report_usage,
+)
 
 MAX_TOKENS = 4_000
 STOP_REASONS = {"tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens", "content_filter": "refusal"}
@@ -20,20 +30,29 @@ class OpenAICompatibleProvider:
     def __init__(self, *, model: str, api_key: str | None, base_url: str | None = None, timeout: float = 60.0,
                  client: Any = None) -> None:
         self.model = model
+        self.on_usage: UsageListener | None = None  # each call's usage, for the shop's monthly meter
         self.client = client or openai.OpenAI(api_key=api_key or "not-set", base_url=base_url or None,
                                               timeout=timeout, max_retries=2)
 
     def create(self, **params: Any):
         try:
-            return self.client.chat.completions.create(model=self.model, max_tokens=MAX_TOKENS, **params)
+            response = self.client.chat.completions.create(model=self.model, max_tokens=MAX_TOKENS, **params)
+            usage = getattr(response, "usage", None)
+            report_usage(self.on_usage, self.model, {
+                "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                "output_tokens": getattr(usage, "completion_tokens", 0) or 0} if usage else {})
+            return response
         except openai.AuthenticationError as exc:
             raise LLMError("The AI service did not accept our API key. Check OPENAI_API_KEY in .env.") from exc
         except openai.RateLimitError as exc:
-            raise LLMError("The AI service is busy right now. Please try again in a minute.") from exc
+            raise LLMError("The AI service is busy right now. Please try again in a minute.", transient=True) from exc
         except (openai.APIConnectionError, openai.APITimeoutError) as exc:
-            raise LLMError("I could not reach the AI service. Check OPENAI_BASE_URL and the connection.") from exc
+            raise LLMError("I could not reach the AI service. Check OPENAI_BASE_URL and the connection.",
+                           transient=True) from exc
         except openai.APIError as exc:
-            raise LLMError(f"The AI service had an error ({type(exc).__name__}). Please try again.") from exc
+            status = getattr(exc, "status_code", None)
+            raise LLMError(f"The AI service had an error ({type(exc).__name__}). Please try again.",
+                           transient=isinstance(status, int) and status >= 500) from exc
 
     def session(self, *, system: str, tools: list[LLMTool], history: list[HistoryMessage]) -> OpenAISession:
         return OpenAISession(self, system, tools, history)

@@ -246,7 +246,8 @@ class StepRecord:
 
 
 STEPS: list[tuple[str, str, str]] = [
-    ("sms", "A customer pays ৳1,200 by bKash; the owner forwards the SMS and it is booked", "Bookkeeper"),
+    ("sms", "A customer who owes baki pays ৳1,200 by bKash; KhataPilot asks what it is for, and the owner's tap "
+            "books it against the baki", "Bookkeeper"),
     ("typed_sale", "The owner types \"sold 3 bags of rice ৳1,500 cash\"", "Bookkeeper"),
     ("forged_sms", "A forged \"you have received ৳5,000\" SMS is not booked", "Guard: fake payment SMS"),
     ("forecast", "\"Will I have enough cash next week?\" warns of the shortfall day and its cause",
@@ -335,6 +336,15 @@ class Demo:
         said = message + "".join(f"\n[{label.get(f['source'], f['source'])}] {f['text']}" for f in forwarded or [])
         return self._action("chat", said, out), out
 
+    def answer_sms(self, out: dict, purpose: str) -> Action:
+        """Tap one of the two buttons the chat shows when money comes in from someone who owes baki."""
+        asked = next(o for o in out.get("outcomes") or [] if o["status"] == "asked")
+        choice = next(c for c in asked["data"]["choices"] if c["purpose"] == purpose)
+        done = self.post(f"/api/sms-questions/{asked['data']['question_id']}/answer", {"purpose": purpose})
+        return Action("approve", f"Tap \"{choice['label']}\"", reply=done["message"],
+                      decision_ids=[asked["decision_id"]] if asked.get("decision_id") else [],
+                      refs=[done["data"]["trx_id"]])
+
     def inbound(self, sender: str, text: str) -> tuple[Action, dict]:
         out = self.post("/api/sim/inbound", {"from_number": sender, "text": text})
         return self._action("inbound", f"from {sender[:3]}XXXX{sender[-4:]}: {text}", out), out
@@ -394,20 +404,24 @@ class Demo:
         pays, sms = self.customer_pays(JAMAL, 1200, "Jamal Uddin")
         before = self.ledger_count()
         action, out = self.chat("record this", [{"source": "forwarded_sms", "text": sms}])
-        return [pays, action], [
-            Check("the SMS is in the books", self.ledger_count() > before),
+        asked = ("record_sms", "asked") in self.tools(out)
+        unbooked = self.ledger_count() == before
+        tap = self.answer_sms(out, "baki") if asked else None
+        return [pays, action, *([tap] if tap else [])], [
+            Check("asked what the money is for before booking (record_sms asked)", asked),
+            Check("nothing was booked before the owner answered", unbooked),
+            Check("the SMS is in the books after the tap", self.ledger_count() > before),
             Check("Jamal Uddin's baki is cleared", all(d["name"] != "Jamal Uddin" for d in self.get("/api/debtors"))),
-            Check("booked by reference to the forwarded SMS (record_sms ok)", ("record_sms", "ok") in self.tools(out),
-                  must=False),
         ]
 
     def step_typed_sale(self):
         before = self.ledger_count()
+        sales_before = self.get("/api/ledger/today")["totals"]["sales_paisa"]
         action, out = self.chat("sold 3 bags of rice ৳1,500 cash")
         today = self.get("/api/ledger/today")["totals"]
         return [action], [
             Check("one entry added", self.ledger_count() == before + 1),
-            Check("today's sales are ৳1,500", today["sales_paisa"] == 150_000),
+            Check("today's sales went up by ৳1,500", today["sales_paisa"] - sales_before == 150_000),
             Check("add_ledger_entry ok", ("add_ledger_entry", "ok") in self.tools(out), must=False),
         ]
 
@@ -438,7 +452,8 @@ class Demo:
 
     def step_collect_baki(self):
         pays, sms = self.customer_pays(BABUL, 7541, "Babul Mia")
-        action, out = self.chat("record this", [{"source": "forwarded_sms", "text": sms}])
+        # The owner says what it is for, so nothing needs asking.
+        action, out = self.chat("Babul paid his baki, record this", [{"source": "forwarded_sms", "text": sms}])
         return [pays, action], [
             Check("Babul Mia no longer owes anything", all(d["name"] != "Babul Mia" for d in self.get("/api/debtors"))),
             Check("record_sms ok", ("record_sms", "ok") in self.tools(out), must=False),

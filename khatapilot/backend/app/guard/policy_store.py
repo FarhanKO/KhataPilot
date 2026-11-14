@@ -166,6 +166,10 @@ class PolicyStore:
         row = self.session.get(BlockedNumber, (self.shop_id, normalize_number(number)))
         return row.reason if row else None
 
+    def blocked(self) -> list[BlockedNumber]:
+        return list(self.session.scalars(select(BlockedNumber).where(BlockedNumber.shop_id == self.shop_id)
+                                         .order_by(BlockedNumber.added_at)))
+
     def block_number(self, number: str, reason: str) -> None:
         key = (self.shop_id, normalize_number(number))
         if self.session.get(BlockedNumber, key) is None:

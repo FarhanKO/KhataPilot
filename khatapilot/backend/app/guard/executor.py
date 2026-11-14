@@ -74,7 +74,7 @@ class ActionExecutor:
         record = self.payments.create(
             payee_name=p.payee_name, payee_number=p.payee_number, method=p.method, amount_paisa=p.amount_paisa,
             execute_on=p.execute_on, decision_id=decision_id, request_id=meta.request_id, tier=tier,
-            with_pin=with_pin, note=p.note,
+            with_pin=with_pin, note=p.note, purpose=p.purpose,
         )
         if record.status == "scheduled":
             message = (f"Scheduled {fmt_taka(record.amount_paisa)} to {record.payee_name or 'the payee'} for "
@@ -136,10 +136,13 @@ class ActionExecutor:
     def send_reminders(self, reminders: RemindersService, action: ProposedAction, decision_id: str, tier: int,
                        meta: ExecutionMeta) -> ExecutionResult:
         """Each reminder gets its own token, bound to its number and the hash of its text. A customer
-        who paid in full while the reminders waited for approval is not sent one."""
-        sent, paid_meanwhile, failed = [], [], []
+        who paid in full, or asked for no reminders, while they waited for approval is not sent one."""
+        sent, paid_meanwhile, failed, stopped = [], [], [], []
         for i, raw in enumerate(action.params.get("reminders", [])):
             draft = ReminderDraft.model_validate(raw)
+            if reminders.opted_out(draft.to_number):
+                stopped.append(draft.customer_name)
+                continue
             if reminders.outstanding(draft.customer_name) <= 0:
                 paid_meanwhile.append(draft.customer_name)
                 continue
@@ -165,8 +168,11 @@ class ActionExecutor:
             parts.append(f"Sent {len(sent)} reminder{'s' if len(sent) != 1 else ''} (simulated): {', '.join(sent)}.")
         if paid_meanwhile:
             parts.append(f"Not sent to {', '.join(paid_meanwhile)}: paid in full while this waited.")
+        if stopped:
+            parts.append(f"Not sent to {', '.join(stopped)}: asked for no reminders.")
         if failed:
             parts.append(f"Failed: {'; '.join(failed)}.")
         status = "sent" if sent or not failed else "failed"
         return ExecutionResult(status, " ".join(parts) or "Nothing to send.",
-                               {"sent": sent, "paid_meanwhile": paid_meanwhile, "failed": failed})
+                               {"sent": sent, "paid_meanwhile": paid_meanwhile, "failed": failed,
+                                "asked_for_none": stopped})

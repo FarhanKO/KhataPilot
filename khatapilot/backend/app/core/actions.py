@@ -22,6 +22,8 @@ class ActionKind(StrEnum):
     PAYMENT = "payment"  # tier 2 within limits, tier 3 otherwise
     MESSAGE = "message.send"  # tier 1: anything sent to a third party
     LOAN_SUBMIT = "loan.submit"  # tier 1
+    CONTROL_BLOCK = "control.block"  # tier 1: block a number (safer, but the owner taps Approve)
+    CONTROL_CHANGE = "control.change"  # tier 3: limits or trusted payees, always the owner's PIN
 
 
 # Provider-side authorization kinds and exactly the fields each one binds.
@@ -61,6 +63,9 @@ class PaymentRequest(BaseModel):
     method: PayMethod | None = None  # None: the trusted payee's saved method, else bKash
     execute_on: date | None = None  # None means now
     note: str | None = Field(default=None, max_length=200)
+    # "savings": the owner's own money moving to their savings account (booked as a withdrawal, not a cost).
+    # Set only by guard code (the savings tool), never by the model: propose_payment has no such argument.
+    purpose: Literal["payment", "savings"] = "payment"
 
 
 class ProposedAction(BaseModel):

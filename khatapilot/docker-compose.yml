@@ -20,17 +20,51 @@ services:
     env_file: .env
     environment:
       SANDBOX_URL: http://sandbox:8100
+      SCHEDULER_IN_WEB: "false"  # the worker below runs the jobs
     ports:
       - "8000:8000"
     depends_on:
       - sandbox
     volumes:
       - backend-var:/app/var
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Scheduled payments, the daily checks, alert SMS and backups, in their own process (scripts/worker.py).
+  worker:
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+    command: python scripts/worker.py
+    env_file: .env
+    environment:
+      SANDBOX_URL: http://sandbox:8100
+    depends_on:
+      - backend
+    volumes:
+      - backend-var:/app/var
+    restart: unless-stopped
+
+  # Texts the owner when the backend or the provider stops answering (scripts/uptime_check.py).
+  uptime:
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+    command: python scripts/uptime_check.py --backend http://backend:8000/api/health --sandbox http://sandbox:8100/health
+    env_file: .env
+    volumes:
+      - backend-var:/app/var
+    restart: unless-stopped
 
   frontend:
     image: node:22-alpine
     working_dir: /app/frontend
-    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    # Built and served compressed (fast on a phone); use `npm run dev` here instead for UI work with instant reload.
+    command: sh -c "npm ci && npm run serve -- --host 0.0.0.0"
     env_file: .env
     environment:
       BACKEND_URL: http://backend:8000

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.clock import Clock, local_date, to_local
 from app.modules.ledger.service import LedgerService
 from app.modules.payments.service import PaymentsService
+from app.modules.risk.features import UNUSUAL_FLOOR, unusual_for_payee
 from app.modules.risk.schemas import PaymentFeatures, RiskScore
 from app.modules.risk.sentinel import FraudSentinel, ModelIntegrityError  # noqa: F401  (public API)
 
@@ -75,4 +76,6 @@ def score_rules(f: PaymentFeatures) -> RiskScore:
     if not f.payee_trusted:
         score += 0.10
         reasons.append("payee is not on the trusted list")
+    if unusual_for_payee(f):  # the same floor Fraud Sentinel applies, so the fallback never lets it through either
+        score = max(score, UNUSUAL_FLOOR)
     return RiskScore(score=round(min(score, 1.0), 3), reasons=reasons or ["nothing unusual"], model="rules-v1")

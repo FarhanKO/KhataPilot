@@ -1,0 +1,67 @@
+{
+  "shops": 400,
+  "cases": 4047,
+  "horizon_months": 3,
+  "by_horizon": {
+    "1": {
+      "cases": 1743,
+      "model": {
+        "median_error_pct_of_money_in": 0.058987512753085884,
+        "p90_error_pct_of_money_in": 0.14230525207853995
+      },
+      "last_month": {
+        "median_error_pct_of_money_in": 0.08949998300418097,
+        "p90_error_pct_of_money_in": 0.21874404697874392
+      },
+      "mean_3": {
+        "median_error_pct_of_money_in": 0.0628956881879338,
+        "p90_error_pct_of_money_in": 0.15683426189800087
+      },
+      "beats_last_month": 0.7314974182444062,
+      "beats_mean_3": 0.5926563396442914,
+      "band_80_coverage": 0.7796901893287436
+    },
+    "2": {
+      "cases": 1343,
+      "model": {
+        "median_error_pct_of_money_in": 0.05638926977954568,
+        "p90_error_pct_of_money_in": 0.13258869905201473
+      },
+      "last_month": {
+        "median_error_pct_of_money_in": 0.0732892305539053,
+        "p90_error_pct_of_money_in": 0.1896540316115528
+      },
+      "mean_3": {
+        "median_error_pct_of_money_in": 0.057844410120952997,
+        "p90_error_pct_of_money_in": 0.14430018460546726
+      },
+      "beats_last_month": 0.6507818317200298,
+      "beats_mean_3": 0.5644080416976918,
+      "band_80_coverage": 0.7930007446016382
+    },
+    "3": {
+      "cases": 961,
+      "model": {
+        "median_error_pct_of_money_in": 0.056944645179939295,
+        "p90_error_pct_of_money_in": 0.13106164113036534
+      },
+      "last_month": {
+        "median_error_pct_of_money_in": 0.07074591710179366,
+        "p90_error_pct_of_money_in": 0.18160237295237555
+      },
+      "mean_3": {
+        "median_error_pct_of_money_in": 0.0588547927242383,
+        "p90_error_pct_of_money_in": 0.1443254070169574
+      },
+      "beats_last_month": 0.6243496357960457,
+      "beats_mean_3": 0.5660770031217481,
+      "band_80_coverage": 0.7939646201873048
+    }
+  },
+  "margin": {
+    "shops": 400,
+    "median_abs_error_points": 1.7420144769674695,
+    "correlation": 0.965891691309347
+  },
+  "as_of": "2026-11-13"
+}

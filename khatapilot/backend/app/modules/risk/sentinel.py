@@ -12,6 +12,8 @@ which bKash/Nagad payments do not have, so the design is reused, not the weights
   with isotonic calibration, so a probability of 0.7 means about 70% of such payments were fraud.
 - Amount-aware thresholds, as in the original: a payment larger than two days of sales is held to
   a stricter bar (its probability counts double against the guard's thresholds).
+- One fixed floor for what the simulated data never shows: a well-known payee paid five times their
+  usual amount or more scores at least 0.6, so it needs the PIN (`features.UNUSUAL_FLOOR`).
 
 The score feeds the guard's fraud check (medium threshold escalates to tier 3, high blocks). Reasons
 come from LightGBM's per-feature contributions (TreeSHAP values computed by LightGBM itself).
@@ -26,7 +28,15 @@ from typing import Any
 import numpy as np
 
 from app.infra.model_files import ModelIntegrityError, load_checked, save_checked
-from app.modules.risk.features import FEATURES, phrase, reassurance, vector
+from app.modules.risk.features import (
+    FEATURES,
+    UNUSUAL_FLOOR,
+    phrase,
+    reassurance,
+    unusual_for_payee,
+    unusual_rows,
+    vector,
+)
 from app.modules.risk.schemas import PaymentFeatures, RiskScore
 
 MODEL_VERSION = "fraud-sentinel-mm-v1"
@@ -60,6 +70,7 @@ class FraudSentinel:
         score = np.where(percentile >= BLOCK_PERCENTILE, np.maximum(score, 0.9), score)
         score = np.where((percentile >= ESCALATE_PERCENTILE) & (percentile < BLOCK_PERCENTILE),
                          np.maximum(score, 0.6), score)
+        score = np.where(unusual_rows(X), np.maximum(score, UNUSUAL_FLOOR), score)
         return score, percentile, probability
 
     def assess(self, f: PaymentFeatures) -> RiskScore:
@@ -71,6 +82,8 @@ class FraudSentinel:
             reasons.append("it is extremely unlike this shop's normal payments (layer 1 anomaly)")
         elif percentile >= ESCALATE_PERCENTILE:
             reasons.append("it is unlike this shop's normal payments (layer 1 anomaly)")
+        if unusual_for_payee(f):
+            reasons.append(phrase("amount_to_payee_usual", f) or "far more than the usual payment to this payee")
         if score < LOW_SCORE and not reasons:
             reasons = reassurance(f) or ["nothing unusual"]
         else:

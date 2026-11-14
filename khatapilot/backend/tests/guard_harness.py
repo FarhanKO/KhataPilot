@@ -69,6 +69,16 @@ class World:
     def wallet_balance(self) -> int:
         return self.sandbox.account(WALLET)["balance_paisa"]
 
+    def paid_before(self, number: str, name: str, amount_taka: int, *, times: int) -> None:
+        """Book `times` weekly payments of the same amount to this payee, so it has a usual amount."""
+        with self.guard() as guard:
+            ledger = LedgerService(guard.session, self.clock)
+            for week in range(1, times + 1):
+                ledger.add_entry(NewLedgerEntry(
+                    shop_id=SHOP, occurred_at=self.clock.now() - timedelta(days=7 * week), kind="supplier_payment",
+                    direction="out", method="bank", amount_paisa=taka(amount_taka), category="Supplies",
+                    counterparty_name=name, counterparty_number=number, source="seed"))
+
     def provider_saw(self, sms_text: str) -> None:
         """Put the transaction an SMS describes on the shop's statement at the provider, so the SMS is
         genuine (KhataPilot books an SMS only when the provider confirms its TrxID and amount)."""

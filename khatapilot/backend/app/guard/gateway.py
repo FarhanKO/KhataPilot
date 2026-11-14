@@ -28,6 +28,16 @@ class ToolRefusal(Exception):
     """Raised by a handler that was allowed to run but could not do the job (e.g. an unreadable SMS)."""
 
 
+class ToolQuestion(Exception):
+    """Raised by a handler that was allowed to run but needs the owner to choose before it does anything
+    (e.g. is this money from a customer who owes baki paying it off, or for something else?). Nothing
+    was done; the app shows the choices and the owner's answer does the job."""
+
+    def __init__(self, question: str, data: dict[str, Any]) -> None:
+        super().__init__(question)
+        self.data = data
+
+
 class ToolCall(BaseModel):
     name: str
     arguments: dict[str, Any] = {}
@@ -45,7 +55,7 @@ class ToolDescriptor(BaseModel):
 class ToolOutcome(BaseModel):
     call_id: str | None
     tool: str
-    status: Literal["ok", "held", "blocked", "error"]
+    status: Literal["ok", "held", "blocked", "error", "asked"]
     tier: int | None = None
     decision_id: str | None = None
     pending_id: str | None = None
@@ -136,6 +146,9 @@ class ToolGateway:
         except ToolRefusal as refusal:
             self._record_result(decision, turn, "FAILED", str(refusal))
             return ToolOutcome(status="error", message=str(refusal), **base)
+        except ToolQuestion as question:
+            self._record_result(decision, turn, "ASKED", f"Nothing booked yet. {question}")
+            return ToolOutcome(status="asked", message=str(question), data=question.data, **base)
         if decision.action.kind is ActionKind.LEDGER_WRITE:
             self._record_result(decision, turn, "RECORDED", "Written to the shop's books.")
         return ToolOutcome(status="ok", message=decision.reason, data=data, **base)

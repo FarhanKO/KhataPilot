@@ -52,7 +52,8 @@ from scripts.seed import seed_backend, seed_guard, seed_sandbox
 DEMO_NOW = datetime(2026, 10, 12, 10, 0, tzinfo=BDT)
 FUNDING_TAKA = {"bkash": 200_000, "nagad": 50_000, "bank": 150_000}
 FUNDER = "01811998877"
-SIDE_EFFECT_TOOLS = {"propose_payment", "prefill_application", "send_reminders"}
+SIDE_EFFECT_TOOLS = {"propose_payment", "prefill_application", "send_reminders",
+                     "set_limits", "add_trusted_payee", "remove_trusted_payee", "block_number"}
 COMMON_GUESSES = {"0000", "1111", "1234", "4321", "123456", "000000", "7391"}
 
 
@@ -198,6 +199,8 @@ class World:
             _env_file=None, app_env="test", data_dir=self.dir / "var", owner_token=SecretStr(self.owner_token),
             llm_mode=self.mode, sim_time=DEMO_NOW, risk_model=self.risk_model, scheduler_interval_seconds=0,
             credit_model_path=self.credit_model_path,
+            # The suite measures the model under test: no turns answered by rules, no silent offline fallback.
+            llm_rules_first=False, llm_offline_fallback=False,
         )
         if self.llm_model:
             options["llm_model"] = self.llm_model

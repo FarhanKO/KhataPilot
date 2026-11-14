@@ -103,6 +103,24 @@ def test_a_customer_who_paid_meanwhile_gets_no_reminder(debtors):
     assert [m["to_masked"] for m in debtors.sandbox.messages()] == ["018XXXX4455"]
 
 
+def test_a_customer_whose_promised_day_is_ahead_is_not_nudged(debtors):
+    with debtors.guard() as guard:
+        guard.ledger.add_entry(NewLedgerEntry(
+            shop_id=SHOP, occurred_at=debtors.clock.now() - timedelta(days=25), kind="baki_sale", direction="in",
+            method="credit", amount_paisa=taka(600), category="Sales", counterparty_name="Rina Begum",
+            counterparty_number="01644556677", due_date=debtors.clock.now().date() + timedelta(days=3),
+            source="seed"))
+    out = debtors.submit("send_reminders", turn(ASK), min_days=14)
+    assert [d["customer_name"] for d in held_reminders(debtors)] == ["Babul Mia", "Sumi Akter"]
+    with debtors.guard() as guard:
+        [pending] = guard.approvals.pending()
+    assert {"name": "Rina Begum", "why": "promised to pay by Thu 15 Oct"} in pending.action["params"]["skipped"]
+    assert out.status == "held"
+    # Named by the owner, they can still be reminded before the day.
+    named = debtors.submit("send_reminders", turn("remind Rina Begum"), customers=["Rina Begum"])
+    assert named.status == "held"
+
+
 def test_stop_freezes_reminders_waiting_for_approval(debtors):
     out = debtors.submit("send_reminders", turn(ASK), min_days=14)
     with debtors.guard() as guard:
@@ -134,3 +152,58 @@ def test_names_from_the_books_cannot_smuggle_text_into_a_reminder():
     assert "<" not in body and "http://" not in body and "💸" not in body
     assert render("banglish", name="Sumi", shop="Rahman Store", owed_paisa=taka(800), since=None).startswith(
         "Assalamu alaikum Sumi, Rahman Store theke bolchi. Apnar ৳800 baki")
+
+
+def test_the_owner_can_name_customers_by_first_name_and_unknown_names_are_left_out(debtors):
+    out = debtors.submit("send_reminders", turn("Send baki reminder to Babul, Sumi, Rasel"),
+                         customers=["Babul", "sumi", "Rasel"])
+    assert out.status == "held"
+    assert [d["customer_name"] for d in held_reminders(debtors)] == ["Babul Mia", "Sumi Akter"]
+    with debtors.guard() as guard:
+        [pending] = guard.approvals.pending()
+    assert {"name": "Rasel", "why": "does not owe the shop anything in the books"} in pending.action["params"]["skipped"]
+
+
+def test_a_name_that_fits_two_customers_is_asked_about_not_guessed(debtors):
+    book(debtors, "baki_sale", "Babul Hossain", "01611112222", 700, days_ago=25)
+    out = debtors.submit("send_reminders", turn("remind Babul and Sumi"), customers=["Babul", "Sumi"])
+    assert [d["customer_name"] for d in held_reminders(debtors)] == ["Sumi Akter"]
+    with debtors.guard() as guard:
+        [pending] = guard.approvals.pending()
+    [babul] = [s for s in pending.action["params"]["skipped"] if s["name"] == "Babul"]
+    assert "more than one customer" in babul["why"] and "Babul Mia" in babul["why"]
+    assert out.status == "held"
+
+
+def test_the_owner_can_take_one_customer_out_before_approving(debtors):
+    out = debtors.submit("send_reminders", turn(ASK), min_days=14)
+    with debtors.guard() as guard:
+        result = guard.approvals.remove_reminder(out.pending_id, "Babul Mia", request_id="req-remove")
+    assert result.ok and result.status == "narrowed" and "1 reminder still" in result.message
+    assert [d["customer_name"] for d in held_reminders(debtors)] == ["Sumi Akter"]
+    with debtors.guard() as guard:
+        [pending] = guard.approvals.pending()
+    assert pending.summary == "Send baki reminders to 1 customer who owe ৳800: Sumi Akter"
+    assert pending.action["params"]["removed"] == ["Babul Mia"]
+    sent = approve(debtors, out.pending_id)
+    assert sent.ok and sent.message == "Sent 1 reminder (simulated): Sumi Akter."
+    assert [m["to_masked"] for m in debtors.sandbox.messages()] == ["018XXXX4455"]
+    assert any(e.decision == "NARROWED" and "Babul Mia" in e.summary for e in debtors.audit.entries(event="approval"))
+
+
+def test_taking_out_the_last_customer_cancels_the_batch(debtors):
+    out = debtors.submit("send_reminders", turn("remind Sumi"), customers=["Sumi"])
+    with debtors.guard() as guard:
+        result = guard.approvals.remove_reminder(out.pending_id, "Sumi Akter", request_id="req-remove")
+        assert result.status == "rejected" and guard.approvals.pending() == []
+        assert guard.approvals.remove_reminder(out.pending_id, "Sumi Akter", request_id="r2").status == "not_found"
+    assert approve(debtors, out.pending_id).status == "rejected"
+    assert debtors.sandbox.messages() == []
+
+
+def test_removing_can_only_narrow_never_add(debtors):
+    out = debtors.submit("send_reminders", turn("remind Sumi"), customers=["Sumi"])
+    with debtors.guard() as guard:
+        missing = guard.approvals.remove_reminder(out.pending_id, "Babul Mia", request_id="req-remove")
+    assert not missing.ok and missing.status == "not_found"
+    assert [d["customer_name"] for d in held_reminders(debtors)] == ["Sumi Akter"]
