@@ -34,6 +34,8 @@ Beside the chat, a **live decision trace** shows every action the AI proposed: w
 | **Decision trace.** Who asked, the tier, every guard check and the decision. | **Message box.** Forward an SMS or invoice, take invoice photos (camera or gallery), or speak instead of typing. Forwarded text is read as data, never as orders. |
 | ![The ledger: today's totals, where the money is, and every entry](docs/img/Ledge.png) | ![The 14-day cash forecast with the shortfall day](docs/img/Forecast.png) |
 | **Ledger.** Today's totals, cash, bKash, Nagad and bank balances, and all 8,657 entries in the books. | **Cash forecast.** 14 days ahead, the shortfall day and the bill behind it. |
+| ![Savings: last month in one picture, what kind of shop it is, and the plan to grow it](docs/img/Savings.png) | ![Alerts: what needs the owner's eye, sorted into security, payments, cash and customers](docs/img/Alerts.png) |
+| **Savings.** A share of each month's profit set aside, goals, real savings products (bKash DPS, Sanchayapatra), and *Grow your shop*: last month's money flow, the kind of shop it is and three 12-month profit paths. | **Alerts.** What needs the owner's eye, sorted into security, payments, cash and customers, with the month's AI use and a monthly report; urgent ones can also be texted to the owner. |
 | ![Payees and limits, protected by the PIN](docs/img/Limits.png) | ![The hash-chained audit log](docs/img/Audit.png) |
 | **Limits.** Trusted payees and limits, changed only with the PIN. | **Audit log.** Every decision, hash-chained, with "verify chain". |
 | ![The simulated provider's balances and statements](docs/img/Sandbox.png) | |
