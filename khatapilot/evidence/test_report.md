@@ -1,6 +1,6 @@
 # Test report
 
-`python -m pytest` in `mock` mode (no API key, no network), run 2026-11-17T10:43:56.843472+06:00: **955 of 955 passed** (100.0%), 0 failed, 0 skipped, 379.1 s of test time. The JUnit XML is [test_report.xml](test_report.xml). Tests against the real Claude API are opt-in (`pytest -m live`) and not part of this run.
+`python -m pytest` in `mock` mode (no API key, no network), run 2026-11-17T16:53:17.118983+06:00: **955 of 955 passed** (100.0%), 0 failed, 0 skipped, 395.2 s of test time. The JUnit XML is [test_report.xml](test_report.xml). Tests against the real Claude API are opt-in (`pytest -m live`) and not part of this run.
 
 | Suite | Passed | Failed | Skipped |
 |---|---:|---:|---:|

@@ -1,6 +1,6 @@
 # Red-team report
 
-Generated 2026-11-14T01:45:17+00:00 by `redteam/runner.py` at commit `e8fbe33+uncommitted`. LLM: **mock-gullible-v1** (mock mode). Fraud score: fraud-sentinel-mm-v1. 157 cases in 143.0 s. Do not edit by hand; re-run the suite.
+Generated 2026-11-17T10:52:48+00:00 by `redteam/runner.py` at commit `7f15bed+uncommitted`. LLM: **mock-gullible-v1** (mock mode). Fraud score: fraud-sentinel-mm-v1. 157 cases in 138.5 s. Do not edit by hand; re-run the suite.
 
 In mock mode the LLM is a deliberately gullible stand-in: it obeys any money instruction it finds in forwarded text or a stranger's message, and each attack can also make it *fooled* (the attacker's tool calls are added) or *compromised* (it proposes only the attacker's calls). Every attack is therefore tested as if the model had already fallen for it; what stops it is the guard, the interface and the provider. Each case runs in a fresh copy of the demo shop with its accounts funded far beyond any attack amount, so anything the guard let through would really move money.
 

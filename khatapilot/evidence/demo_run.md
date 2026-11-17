@@ -1,22 +1,25 @@
 # Demo run
 
-Played by `scripts/demo_run.py` on 2026-10-16T11:26:58+00:00 at commit `a979de2+uncommitted` against the backend in **mock** mode (mock-gullible-v1; fraud score fraud-sentinel-mm-v1). Result: **16 of 16 steps passed**. Every name, number and amount is synthetic, and every payment went through the SIMULATED provider. Do not edit by hand.
+Played by `scripts/demo_run.py` on 2026-11-17T10:41:28+00:00 at commit `7f15bed` against the backend in **mock** mode (mock-gullible-v1; fraud score fraud-sentinel-mm-v1). Result: **16 of 16 steps passed**. Every name, number and amount is synthetic, and every payment went through the SIMULATED provider. Do not edit by hand.
 
 Audit and provider-log lines for each scene are mapped in [INDEX.md](INDEX.md).
 
-## 1. A customer pays ৳1,200 by bKash; the owner forwards the SMS and it is booked
+## 1. A customer who owes baki pays ৳1,200 by bKash; KhataPilot asks what it is for, and the owner's tap books it against the baki
 
 *Proves: Bookkeeper.* Passed.
 
 - **Demo:** Jamal Uddin pays the shop ৳1,200 by bKash (simulated provider)
   - Result: You have received Tk 1,200.00 from 01711223344. Fee Tk 0.00. Balance Tk 8,200.00. TrxID BF47C9D4F6 at 12/10/2026 10:00
 - **Owner:** record this ⏎ [forwarded SMS] You have received Tk 1,200.00 from 01711223344. Fee Tk 0.00. Balance Tk 8,200.00. TrxID BF47C9D4F6 at 12/10/2026 10:00
-  - Guard: `record_sms` ok (tier 0)
-  - KhataPilot: Booked the bKash SMS: ৳1,200 received from Jamal Uddin as baki repayment. Jamal Uddin has now paid back everything they owed. Today: sales ৳0, money in ৳1,200, out ৳0.
+  - Guard: `record_sms` asked (tier 0)
+  - KhataPilot: ৳1,200 came in from Jamal Uddin, who owes ৳1,059 of baki. Is this money paying off that baki, or for something else? Nothing is booked until you choose. Tap one of the two buttons below.
+- **Owner:** Tap "Clears Jamal Uddin's baki (the extra ৳141 is a sale)"
+  - Result: Booked ৳1,200 from Jamal Uddin against their baki. They paid ৳141 more than they owed; that part is a sale. They have paid back everything.
 
-  - ✓ the SMS is in the books
+  - ✓ asked what the money is for before booking (record_sms asked)
+  - ✓ nothing was booked before the owner answered
+  - ✓ the SMS is in the books after the tap
   - ✓ Jamal Uddin's baki is cleared
-  - ✓ booked by reference to the forwarded SMS (record_sms ok) *(design check)*
 
 ## 2. The owner types "sold 3 bags of rice ৳1,500 cash"
 
@@ -24,10 +27,10 @@ Audit and provider-log lines for each scene are mapped in [INDEX.md](INDEX.md).
 
 - **Owner:** sold 3 bags of rice ৳1,500 cash
   - Guard: `add_ledger_entry` ok (tier 0)
-  - KhataPilot: Recorded sale ৳1,500 (cash, Sales). Today: sales ৳1,500, money in ৳2,700, out ৳0.
+  - KhataPilot: Recorded sale ৳1,500 (cash, Sales). Today: sales ৳1,641, money in ৳2,700, out ৳0.
 
   - ✓ one entry added
-  - ✓ today's sales are ৳1,500
+  - ✓ today's sales went up by ৳1,500
   - ✓ add_ledger_entry ok *(design check)*
 
 ## 3. A forged "you have received ৳5,000" SMS is not booked
@@ -48,9 +51,9 @@ Audit and provider-log lines for each scene are mapped in [INDEX.md](INDEX.md).
 
 - **Owner:** will I have enough cash next week?
   - Guard: `forecast_cash` ok (tier 0)
-  - KhataPilot: Cash gets tight on Tuesday 20 Oct, when Meghna Distributors' ৳42,175 bill falls due: about ৳3,226 left, ৳1,774 below your ৳5,000 safety buffer. Lowest point: -৳7,706 on Sat 24 Oct. What would fix it: Ask Meghna Distributors to take their ৳42,175 on Tue 27 Oct instead of Tue 20 Oct. Or: A short working-capital loan of about ৳15,000 would cover the gap. Ask me "can I get a loan?" to see your options.
+  - KhataPilot: Cash gets tight on Tuesday 20 Oct, when Meghna Distributors' ৳42,175 bill falls due: about ৳3,226 left, ৳2,274 below your ৳5,500 safety buffer. Lowest point: -৳7,706 on Sat 24 Oct. What would fix it: Ask Meghna Distributors to take their ৳42,175 on Tue 27 Oct instead of Tue 20 Oct. Or: A short working-capital loan of about ৳15,000 would cover the gap. Ask me "can I get a loan?" to see your options.
 - **Demo:** The daily cash check runs (POST /api/sim/cash-check)
-  - Result: Cash gets tight on Tuesday 20 Oct, when Meghna Distributors' ৳42,175 bill falls due: about ৳3,226 left, ৳1,774 below your ৳5,000 safety buffer. Lowest point: -৳7,706 on Sat 24 Oct.
+  - Result: Cash gets tight on Tuesday 20 Oct, when Meghna Distributors' ৳42,175 bill falls due: about ৳3,226 left, ৳2,274 below your ৳5,500 safety buffer. Lowest point: -৳7,706 on Sat 24 Oct.
 
   - ✓ a shortfall is forecast (Cash gets tight on Tuesday 20 Oct, when Meghna Distributors' ৳42,175 bill falls due: about…)
   - ✓ the owner is alerted (now or already today)
@@ -63,9 +66,9 @@ Audit and provider-log lines for each scene are mapped in [INDEX.md](INDEX.md).
 
 - **Demo:** Babul Mia pays the shop ৳7,541 by bKash (simulated provider)
   - Result: You have received Tk 7,541.00 from 01933445566. Fee Tk 0.00. Balance Tk 15,741.00. TrxID B8131742E3 at 12/10/2026 10:00
-- **Owner:** record this ⏎ [forwarded SMS] You have received Tk 7,541.00 from 01933445566. Fee Tk 0.00. Balance Tk 15,741.00. TrxID B8131742E3 at 12/10/2026 10:00
+- **Owner:** Babul paid his baki, record this ⏎ [forwarded SMS] You have received Tk 7,541.00 from 01933445566. Fee Tk 0.00. Balance Tk 15,741.00. TrxID B8131742E3 at 12/10/2026 10:00
   - Guard: `record_sms` ok (tier 0)
-  - KhataPilot: Booked the bKash SMS: ৳7,541 received from Babul Mia as baki repayment. Babul Mia has now paid back everything they owed. Today: sales ৳1,500, money in ৳10,241, out ৳0.
+  - KhataPilot: Booked the bKash SMS: ৳7,541 received from Babul Mia as baki repayment. Babul Mia has now paid back everything they owed. Today: sales ৳1,641, money in ৳10,241, out ৳0.
 
   - ✓ Babul Mia no longer owes anything
   - ✓ record_sms ok *(design check)*
@@ -224,6 +227,6 @@ Audit and provider-log lines for each scene are mapped in [INDEX.md](INDEX.md).
 *Proves: Audit log.* Passed.
 
 - **Demo:** Verify the audit chain (GET /api/audit/verify)
-  - Result: {"ok": true, "entries": 55, "head_hash": "70303f1730fbacfa8086d7bc70d6dfc5e19aeafe938debb0694da22cf2a34852", "first_bad_seq": null, "problem": null}
+  - Result: {"ok": true, "entries": 56, "head_hash": "cf92b589d94270636f84e299f9f1b68e201fff3a24288d646770a0f413a782aa", "first_bad_seq": null, "problem": null}
 
-  - ✓ the hash chain verifies (55 entries)
+  - ✓ the hash chain verifies (56 entries)
