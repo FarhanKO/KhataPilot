@@ -1,11 +1,55 @@
 import { ArrowRight, Sprout } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { api, errorText } from "../api";
 import { compactTaka, taka } from "../format";
 import { useData } from "../hooks";
 import { useApp } from "../state";
 import type { FlowPart, GrowthPlan, Lever, Scenario } from "../types";
-import { Badge, Button, Card, Loading, Note } from "../ui";
+import { Badge, Button, Card, Loading, Note, Segmented } from "../ui";
+
+const STOCK_SHARES = [5, 10, 15, 20, 25, 30];
+
+/** How much profit goes back into stock: sized from the books every month, or the owner's own share. */
+function StockShare({ plan, onChange }: { plan: GrowthPlan; onChange: (p: GrowthPlan) => void }) {
+  const { refresh, toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const p = plan.profile;
+  async function choose(value: number) {
+    setBusy(true);
+    try {
+      onChange(await api.put<GrowthPlan>("/growth/reinvest", { share_pct: value === 0 ? null : value }));
+      refresh();
+    } catch (e) {
+      toast(errorText(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="space-y-2.5 rounded-xl border border-line bg-page/60 p-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="label text-[10px] text-faint">Put back into stock</span>
+        <span className="text-xs text-muted">
+          {p.reinvest_choice_pct !== null ? `Your choice: ${p.reinvest_choice_pct}%` : `From your books: ${p.reinvest_suggested_pct}%`}
+          {p.reinvest_wait && <span className="text-warn"> · {p.reinvest_wait}</span>}
+        </span>
+      </div>
+      <div className={busy ? "pointer-events-none opacity-60" : ""}>
+        <Segmented
+          value={p.reinvest_choice_pct ?? 0}
+          onChange={(v) => void choose(v)}
+          options={[{ value: 0, label: "Auto" }, ...STOCK_SHARES.map((s) => ({ value: s, label: `${s}%` }))]}
+        />
+      </div>
+      <p className="text-xs leading-relaxed text-muted">
+        {p.reinvest_why} Worked out again every month.{" "}
+        {p.reinvest_choice_pct !== null && `Your ${p.reinvest_choice_pct}% is used instead; tap Auto to go back. `}
+        In chat: “put 15% back into stock” or “let KhataPilot decide”. It moves no money.
+      </p>
+    </div>
+  );
+}
 import { niceTicks, useWidth } from "./ForecastChart";
 
 const STAGE_TONE: Record<GrowthPlan["profile"]["stage"], "ok" | "warn" | "bad" | "info"> = {
@@ -270,7 +314,7 @@ function LeverRow({ lever, index }: { lever: Lever; index: number }) {
 
 export function GrowthSection() {
   const { version } = useApp();
-  const { data, error } = useData<GrowthPlan>("/growth", [version]);
+  const { data, error, setData } = useData<GrowthPlan>("/growth", [version]);
   if (error) return <Note tone="info">{error}</Note>;
   if (!data) return <Loading label="Reading your books for growth" />;
   const p = data.profile;
@@ -313,6 +357,7 @@ export function GrowthSection() {
                 </div>
               ))}
             </dl>
+            <StockShare plan={data} onChange={setData} />
           </div>
         </Card>
       </div>

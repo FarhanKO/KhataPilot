@@ -46,6 +46,34 @@ def test_growth_from_chat_reads_and_moves_nothing(app):
     assert not app.http.get("/api/approvals").json()
 
 
+def test_while_the_cushion_is_short_collecting_baki_starts_now(app):
+    plan = growth(app)
+    assert plan["headline"].startswith("Cushion first. Start now: Collect ৳")
+    profile = plan["profile"]
+    assert profile["reinvest_choice_pct"] is None and profile["reinvest_wait"].startswith("once the cushion holds")
+    assert "A usual month lately made about ৳" in profile["reinvest_why"]
+    stock = next(s for s in plan["scenarios"] if s["key"] == "reinvest")
+    assert stock["label"] == f"Put {profile['reinvest_suggested_pct'] or 5}% of profit back into stock {profile['reinvest_wait']}"
+
+
+def test_the_owner_chooses_how_much_goes_back_into_stock_in_chat_and_on_the_page(app):
+    wallet = app.wallet()
+    out = app.chat("put 15% of profit back into stock")
+    assert [o["status"] for o in out["outcomes"]] == ["ok"] and "your choice" in out["reply"]
+    plan = growth(app)
+    assert plan["profile"]["reinvest_choice_pct"] == 15
+    stock = next(s for s in plan["scenarios"] if s["key"] == "reinvest")
+    assert stock["label"].startswith("Put 15% of profit back into stock (your choice)")
+    assert any("15% you chose" in line for line in plan["method"])
+
+    # The Savings page's chips do the same; Auto hands it back to the books.
+    response = app.http.put("/api/growth/reinvest", json={"share_pct": 25})
+    assert response.status_code == 200 and response.json()["profile"]["reinvest_choice_pct"] == 25
+    out = app.chat("let KhataPilot decide how much goes back into stock")
+    assert growth(app)["profile"]["reinvest_choice_pct"] is None and "sizes it from your books" in out["reply"]
+    assert app.wallet() == wallet and not app.http.get("/api/approvals").json(), "nothing moves"
+
+
 def test_the_year_ahead_has_ramadan_and_eid_in_it(app):
     months = growth(app)["scenarios"][0]["months"]
     seasons = {m["label"]: m["season"] for m in months}

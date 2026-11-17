@@ -37,7 +37,11 @@ class ShopProfile(BaseModel):
     trend: Trend
     monthly_trend_pct: float  # sales growth per month, from a straight line through six months
     profit_swing_pct: float | None  # how much monthly profit moves around its middle
-    reinvest_pct: int  # the share of profit the books say this shop can put back into stock
+    reinvest_pct: int  # the share of profit to put back into stock now (0: not yet)
+    reinvest_suggested_pct: int = 0  # what the books say this month, even while it has to wait
+    reinvest_choice_pct: int | None = None  # the owner's own choice; None: KhataPilot sizes it
+    reinvest_why: str = ""  # how the suggestion was worked out, in words
+    reinvest_wait: str = ""  # why it has to wait, if it does ("once the cushion holds")
 
 
 class ScenarioMonth(BaseModel):

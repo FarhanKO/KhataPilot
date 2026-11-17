@@ -74,6 +74,22 @@ class GrowthService:
         cushion_ok = forecast.lowest_balance_paisa >= forecast.buffer_paisa
         stage = G.stage_of(steadiness=buffer.steadiness, monthly_trend=monthly_trend, cushion_ok=cushion_ok)
         swing_pct = G.safe_ratio(buffer.swing_ratio)
+
+        # How much to put back into stock: the owner's own choice, else sized from this month's books (what a
+        # usual month leaves after the household and savings, never more than this kind of shop should).
+        savings_share = self.savings.share()
+        cap_stage = G.ceiling_stage(stage, steadiness=buffer.steadiness, monthly_trend=monthly_trend)
+        suggested, why = G.suggest_reinvest(G.reinvest_room(recent, savings_share), cap_stage)
+        choice = self.savings.reinvest_share()
+        chosen = choice if choice is not None else suggested
+        waits = []
+        if stage == "cushion_first":
+            waits.append("the cushion holds")
+        elif stage == "shrinking":
+            waits.append("sales steady")
+        if choice is None and suggested == 0:
+            waits.append("the household takes less than the shop makes")
+        wait = ("once " + " and ".join(waits)) if waits else ""
         profile = ShopProfile(
             stage=stage, stage_label=G.STAGE_LABEL[stage],
             stage_text=G.stage_text(stage, monthly_trend=monthly_trend, swing_pct=swing_pct,
@@ -81,15 +97,17 @@ class GrowthService:
                                     lowest_day=forecast.lowest_day),
             steadiness=buffer.steadiness, daily_swing_pct=swing_pct, trend=G.trend_word(monthly_trend),
             monthly_trend_pct=round(monthly_trend * 100, 1), profit_swing_pct=round(band / middle * 100),
-            reinvest_pct=G.REINVEST_BY_STAGE[stage])
+            reinvest_pct=0 if wait else chosen, reinvest_suggested_pct=suggested, reinvest_choice_pct=choice,
+            reinvest_why=why, reinvest_wait=wait)
 
-        # Three paths. A shop that should not reinvest yet still sees the gentle path, labelled as later.
-        pct = profile.reinvest_pct or 10
-        later = "" if profile.reinvest_pct else " once the cushion holds and sales steady"
+        # Three paths. A shop that should not put profit back yet still sees the stock path, labelled as later.
+        pct = chosen or G.REINVEST_STEP
+        later = f" {wait}" if wait else ""
+        yours = " (your choice)" if choice is not None else ""
         overdue = [b for b in self.ledger.baki_by_customer(self.shop_id, today)
                    if b.outstanding_paisa > 0 and (b.days_outstanding or 0) >= G.OVERDUE_DAYS]
         overdue_paisa = sum(b.outstanding_paisa for b in overdue)
-        share = self.savings.share() or DEFAULT_SHARE_PCT
+        share = savings_share or DEFAULT_SHARE_PCT
 
         def path(key, label, assumption, reinvest, capital) -> Scenario:
             months_ahead = G.project(base=base, monthly_trend=monthly_trend, margin=margin, reinvest_pct=reinvest,
@@ -105,7 +123,7 @@ class GrowthService:
                       f"Profit starts from an ordinary month ({fmt_taka(G.whole(base))}, the average of the last "
                       f"{len(months)} with Ramadan and Eid taken out), follows half your sales trend ({trend_text}), "
                       "and adds the seasons back in.", 0, 0)
-        reinvest = path("reinvest", f"Put {pct}% of profit back into stock{later}",
+        reinvest = path("reinvest", f"Put {pct}% of profit back into stock{yours}{later}",
                         f"As now, plus {pct}% of each month's profit put back into stock, earning your "
                         f"{margin:.0%} margin on the half that becomes new sales.", pct, 0)
         collected = int(overdue_paisa * G.COLLECT_SHARE)
@@ -132,7 +150,8 @@ class GrowthService:
                 levers.append(lever)
         levers += G.cost_levers(recent, earlier)
         if lever := G.reinvest_lever(profile.reinvest_pct, margin, reinvest.extra_vs_now_paisa,
-                                     reinvest.months[-1].profit_paisa - as_now.months[-1].profit_paisa):
+                                     reinvest.months[-1].profit_paisa - as_now.months[-1].profit_paisa,
+                                     chosen_by_owner=choice is not None):
             levers.append(lever)
         levers = G.rank(levers, margin)
 
@@ -141,15 +160,14 @@ class GrowthService:
         flow = MoneyFlow(month=last.month, label=label, money_in=money_in, costs=costs, profit_paisa=last.profit,
                          uses=uses, gross_margin_pct=round(margin * 100, 1), headline=G.flow_headline(last, label))
         growth_moves = [lv for lv in levers if lv.kind != "cushion"]
-        then = "Once it holds" if stage == "cushion_first" else "First move"
-        headline = f"{profile.stage_label}. " + (f"{then}: {growth_moves[0].title}." if growth_moves else
-                                                 "Keep doing what you are doing.")
+        headline = f"{profile.stage_label}. " + (f"{G.lead_in(stage, growth_moves[0])}: {growth_moves[0].title}."
+                                                 if growth_moves else "Keep doing what you are doing.")
         return GrowthPlan(as_of=now, headline=headline, flow=flow, profile=profile, base_profit_paisa=G.whole(base),
                           scenarios=[as_now, reinvest, collect], levers=levers,
-                          method=self._method(len(months), margin, share))
+                          method=self._method(len(months), margin, share, choice))
 
     @staticmethod
-    def _method(months: int, margin: float, share: int) -> list[str]:
+    def _method(months: int, margin: float, share: int, choice: int | None) -> list[str]:
         return [
             f"Everything comes from your own books: the last {months} finished months.",
             "Profit is cash profit, the same as your savings plan uses: sales in cash and mobile money plus baki "
@@ -161,6 +179,11 @@ class GrowthService:
             "multipliers the cash forecast uses (busier Ramadan and pre-Eid weeks, closed Eid days).",
             "What kind of shop it is comes from how far a usual day swings around normal (the same measure as your "
             "safety buffer) and from that trend. Steadier shops can put more of their profit back into stock.",
+            (f"The stock path uses the {choice}% you chose (say \"put 15% back into stock\" in chat to change it, or "
+             "\"let KhataPilot decide\")." if choice is not None else
+             "How much to put back is worked out again every month: what a usual month of the last three leaves after "
+             "the household's withdrawals and your savings, never more than your kind of shop should (10% for a "
+             "choppy shop up to 25% for a steady, growing one). You can choose your own share in chat."),
             "Extra stock earns your margin on the half of it that becomes new sales each month: a deliberately "
             "modest rule. The shaded band is an 80% range from how much your monthly profit has moved.",
             "Backtested on 400 synthetic shops (docs/results/growth_backtest.md): the as-now path's monthly profit "

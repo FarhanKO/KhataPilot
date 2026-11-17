@@ -109,6 +109,16 @@ def test_a_trusted_payee_paid_far_more_than_usual_needs_the_pin(world):
     assert (big.outcome, big.tier) == (Outcome.HOLD_PIN, 3)
 
 
+def test_a_stock_share_or_savings_account_the_owner_never_said_is_refused(world):
+    made_up = world.submit("set_reinvest_share", turn("put some profit back into stock"), share_pct=25)
+    assert made_up.status == "blocked" and "25% is not in your message" in made_up.message
+    assert world.submit("set_reinvest_share", turn("put 25% back into stock"), share_pct=25).status == "ok"
+    account = world.submit("set_savings_account", turn("set up my savings account"), number="01712345679")
+    assert account.status == "blocked" and "not in your own message" in account.message
+    scam = world.submit("set_savings_account", turn(f"my savings account is {SCAMMER}"), number=SCAMMER)
+    assert scam.status == "held"  # the owner typed it: held for the PIN, with the warning to check it is theirs
+
+
 @pytest.mark.parametrize(("score", "expected"), [(0.49, PASS), (0.50, ESCALATE), (0.849, ESCALATE), (0.85, BLOCK)])
 def test_fraud_score_thresholds(world, monkeypatch, score, expected):
     monkeypatch.setattr(RiskService, "score_payment", lambda self, f: RiskScore(score=score, reasons=["test"], model="t"))

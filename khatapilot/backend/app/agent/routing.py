@@ -29,6 +29,7 @@ RULE_TOOLS = frozenset({
     "list_trusted_payees", "summarize_activity", "list_reminders", "add_ledger_entry", "list_bills",
     "get_safety_buffer", "set_safety_buffer", "record_customer_payment", "get_limits", "list_blocked_numbers",
     "get_savings", "set_savings_share", "get_growth_plan", "set_savings_goal", "add_starter_goals",
+    "set_reinvest_share",
 })
 MAX_WORDS = 16
 BANGLA = re.compile(r"[ঀ-৲৴-৿]")  # the Bengali block, except the taka sign ৳ (U+09F3)

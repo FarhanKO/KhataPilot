@@ -190,15 +190,22 @@ def grounded(ctx: CheckContext) -> CheckResult:
                            "Booked straight from the SMS your phone received; nothing was retyped.")
         return _result("grounded", label, CheckStatus.PASS,
                        f"Booked straight from forwarded SMS {index}; the model retyped nothing.")
-    if ctx.action.tool == "set_savings_share":
+    if ctx.action.tool in ("set_savings_share", "set_reinvest_share"):
+        what = "your savings share" if ctx.action.tool == "set_savings_share" else "the share put back into stock"
         if params.get("pause"):
             return _result("grounded", label, CheckStatus.PASS, "Pausing your savings moves no money.")
+        if params.get("automatic"):
+            return _result("grounded", label, CheckStatus.PASS,
+                           "KhataPilot sizes it from your books again; no number from anyone's message is used.")
         share = params.get("share_pct")
+        if share is None:  # only the basis: last month or the last three months, no number involved
+            return _result("grounded", label, CheckStatus.PASS,
+                           "Choosing what your savings are a share of moves no money.")
         said = {int(m) for m in PERCENT_RE.findall(normalize_digits(ctx.turn.owner_text))}
         if share in said:
             return _result("grounded", label, CheckStatus.PASS, f"{share}% appears in your own message.")
         return _result("grounded", label, CheckStatus.BLOCK,
-                       f"{share}% is not in your message, so your savings share was not changed.")
+                       f"{share}% is not in your message, so {what} was not changed.")
     if ctx.action.tool == "add_starter_goals" or (ctx.action.tool == "set_savings_goal" and params.get("starter")):
         return _result("grounded", label, CheckStatus.PASS,
                        "The goal's amount is worked out from your books by KhataPilot's code, not by the model.")
@@ -221,6 +228,10 @@ def grounded(ctx: CheckContext) -> CheckResult:
     if ctx.action.tool == "set_safety_buffer" and amount == 0 and \
             re.search(r"(?<![\d,.])0(?![\d,.])|\b(?:zero|no buffer)\b", normalize_digits(ctx.turn.owner_text), re.I):
         return _result("grounded", label, CheckStatus.PASS, "You asked for no safety buffer in your own message.")
+    if ctx.action.tool == "correct_balance" and amount == 0 and \
+            re.search(r"(?<![\d,.])0(?![\d,.])|\b(?:zero|nothing|empty|kichu nai|kichui nai)\b",
+                      normalize_digits(ctx.turn.owner_text), re.I):
+        return _result("grounded", label, CheckStatus.PASS, "You said in your own message that nothing is there.")
     if amount is None and isinstance(params.get("payee_name"), str):
         # A bill change without an amount (priority, a new day, removing it): the owner must have named the
         # payee themselves, so a forwarded invoice cannot reprioritise or delete the shop's bills.
@@ -399,6 +410,17 @@ def owner_settings(ctx: CheckContext) -> CheckResult:
                        f"Payments to {name} within your limits will go without your PIN. Only trust a number you "
                        "have checked yourself: a message asking you to change a supplier's number is a common scam.",
                        tier=3)
+    if what == "savings_account":
+        number = params.get("number", "")
+        if not _number_in(number, owner):
+            return _result("owner_settings", label, CheckStatus.BLOCK,
+                           f"{mask_number(number)} is not in your own message. Your savings only go to a number you "
+                           "typed yourself, never one from a forwarded message.")
+        if ctx.blocked_reason:
+            return _result("owner_settings", label, CheckStatus.BLOCK, f"{mask_number(number)} is on your blocked list.")
+        return _result("owner_settings", label, CheckStatus.ESCALATE,
+                       f"Each month's savings will be sent to {mask_number(number)}. Make sure it is your own account: "
+                       "someone asking you to save into their number is a scam.", tier=3)
     if what == "remove_payee":
         name = params.get("name", "")
         if not named_by_owner(name, owner):

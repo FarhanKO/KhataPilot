@@ -103,8 +103,25 @@ class SavingsService:
         self.session.flush()
         return basis
 
+    REINVEST_RANGE = (5, 50)
+
+    def reinvest_share(self) -> int | None:
+        """The share of profit the owner chose to put back into stock; None lets the books decide."""
+        row = self._row()
+        return row.reinvest_pct if row else None
+
+    def set_reinvest_share(self, pct: int | None) -> int | None:
+        low, high = self.REINVEST_RANGE
+        if pct is not None and not low <= pct <= high:
+            raise ValueError(f"the share put back into stock must be between {low}% and {high}%")
+        row = self._row_or_new()
+        row.reinvest_pct, row.reinvest_set_at = pct, self.clock.now()
+        self.session.flush()
+        return pct
+
     def set_account(self, *, name: str, number: str, method: str) -> SavingsAccount:
-        """Only the interface's PIN-protected route calls this: it decides where money may go."""
+        """Called only once the owner's PIN is checked (the Savings tab's route, or a chat proposal the owner
+        confirmed with the PIN): it decides where money may go."""
         row = self._row_or_new()
         row.account_name, row.account_number, row.account_method = name.strip()[:64], number, method
         row.account_set_at = self.clock.now()

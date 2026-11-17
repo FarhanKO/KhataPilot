@@ -83,15 +83,11 @@ class OwnerControls:
 
     def set_savings_account(self, pin: str | None, *, savings, name: str, number: str, method: str, request_id: str,
                             channel: str = "web") -> ControlResult:
-        """Where the owner's monthly savings may go. It decides where money can leave to, so it needs the PIN,
-        and it is never an agent tool: a chat message cannot change it."""
+        """Where the owner's monthly savings may go. It decides where money can leave to, so it needs the PIN.
+        (Chat can only propose it: `set_savings_account` is held until the owner enters the PIN in the app.)"""
         normal = normalize_number(number) or ""
-        if method in ("bkash", "nagad") and not normalize_msisdn(normal):
-            return ControlResult(ok=False, message="That is not a bKash or Nagad number.")
-        if method == "bank" and not (8 <= len(normal) <= 20 and normal.isdigit()):
-            return ControlResult(ok=False, message="That is not a bank account number.")
-        if self.store.blocked_reason(normal):
-            return ControlResult(ok=False, message=f"{mask_number(normal)} is on your blocked list.")
+        if problem := changes.savings_account_problem(self.store, normal, method):
+            return ControlResult(ok=False, message=problem)
         if refused := self._pin_ok(pin, request_id, channel, "set the savings account"):
             return refused
         account = savings.set_account(name=name, number=normal, method=method)

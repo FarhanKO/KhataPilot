@@ -9,8 +9,9 @@ from app.infra.db import Base
 
 
 class SavingsPlan(Base):
-    """The owner's savings plan. No row: no plan yet. The share is set in the app or in chat; the
-    account money goes to is set only in the app with the owner's PIN."""
+    """The owner's savings plan. No row: no plan yet. The share and its basis are set in the app or in
+    chat; the account money goes to always needs the owner's PIN (in the Savings tab, or proposed in
+    chat and confirmed with the PIN in the app)."""
 
     __tablename__ = "savings_plans"
 
@@ -23,6 +24,10 @@ class SavingsPlan(Base):
     account_number: Mapped[str | None] = mapped_column(String(32), default=None)
     account_method: Mapped[str | None] = mapped_column(String(8), default=None)
     account_set_at: Mapped[datetime | None] = mapped_column(default=None)
+    # The share of profit the owner chose to put back into stock (the growth plan's stock path); None: let
+    # KhataPilot size it from the books each month. It moves no money.
+    reinvest_pct: Mapped[int | None] = mapped_column(default=None)
+    reinvest_set_at: Mapped[datetime | None] = mapped_column(default=None)
 
 
 class SavingsGoal(Base):

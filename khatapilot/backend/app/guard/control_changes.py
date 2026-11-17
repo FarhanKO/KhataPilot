@@ -39,6 +39,20 @@ def payee_problem(store: PolicyStore, number: str, method: str) -> str | None:
     return None
 
 
+def savings_account_problem(store: PolicyStore, number: str, method: str) -> str | None:
+    """Why this cannot be the owner's savings account, or None if it can (the Savings tab and chat share it)."""
+    normal = normalize_number(number) or ""
+    if method in ("bkash", "nagad") and not normalize_msisdn(normal):
+        return "That is not a bKash or Nagad number."
+    if method == "bank" and not (8 <= len(normal) <= 20 and normal.isdigit()):
+        return "That is not a bank account number."
+    if method not in METHODS:
+        return "The savings account must be bKash, Nagad or a bank account."
+    if store.blocked_reason(normal):
+        return f"{mask_number(normal)} is on your blocked list."
+    return None
+
+
 def limits_problem(per_txn_paisa: int | None, daily_paisa: int | None) -> str | None:
     if per_txn_paisa is None and daily_paisa is None:
         return "Say which limit to change: per payment, per day, or both."

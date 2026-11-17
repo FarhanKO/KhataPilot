@@ -607,6 +607,10 @@ export interface GrowthPlan {
     monthly_trend_pct: number;
     profit_swing_pct: number | null;
     reinvest_pct: number;
+    reinvest_suggested_pct: number;
+    reinvest_choice_pct: number | null;
+    reinvest_why: string;
+    reinvest_wait: string;
   };
   base_profit_paisa: number;
   scenarios: Scenario[];

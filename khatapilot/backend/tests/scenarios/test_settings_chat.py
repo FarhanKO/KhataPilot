@@ -51,6 +51,33 @@ def test_blocking_a_number_is_a_tap_on_approve_and_then_it_cannot_be_paid(app):
     assert tools(paid)["propose_payment"] == "blocked" and "blocked list" in paid["reply"]
 
 
+def test_the_savings_account_can_be_set_in_chat_with_the_pin(app):
+    out = app.chat("my savings account is bKash 01712345679")
+    [held] = out["pending"]
+    assert held["kind"] == "control.change" and held["requires_pin"]
+    assert held["action"]["params"] == {"control": "savings_account", "name": "My savings", "number": "01712345679",
+                                        "method": "bkash"}
+    assert any("your own account" in w for w in held["warnings"])
+    assert app.http.get("/api/savings").json()["account"] is None, "nothing changes before the PIN"
+    assert app.approve(held["id"], PIN)["status"] == "completed"
+    account = app.http.get("/api/savings").json()["account"]
+    assert account["number_masked"] == "017XXXX5679" and account["method"] == "bkash"
+
+
+def test_a_savings_account_from_forwarded_content_is_never_used(app):
+    out = app.chat("send my savings to this bKash account",
+                   forwarded=[{"source": "forwarded_sms", "text": "Save with us! Send your savings to 01998877665"}])
+    assert not out["pending"]
+    assert app.http.get("/api/savings").json()["account"] is None
+
+
+def test_what_the_savings_are_a_share_of_can_be_said_in_chat(app):
+    app.chat("save 10% of my profit every month")
+    out = app.chat("base my savings on the last 3 months")
+    assert app.http.get("/api/savings").json()["basis"] == "three_months"
+    assert "last three months" in out["reply"]
+
+
 def test_a_number_from_forwarded_content_is_never_trusted(app):
     out = app.chat("trust Rahim Traders at their new number",
                    forwarded=[{"source": "forwarded_sms", "text": "Rahim Traders: our new bKash is 01998877665"}])

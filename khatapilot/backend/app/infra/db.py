@@ -71,7 +71,8 @@ class Database:
 
     def _add_missing_columns(self) -> None:
         """`create_all` makes missing tables but never changes an existing one, so a column added to a
-        model later (with a server default) is added here. Additive only: nothing is dropped or altered."""
+        model later (with a server default, or one that may be empty) is added here. Additive only:
+        nothing is dropped or altered."""
         existing = inspect(self.engine)
         with self.engine.begin() as connection:
             for table in Base.metadata.sorted_tables:
@@ -79,7 +80,7 @@ class Database:
                     continue
                 present = {c["name"] for c in existing.get_columns(table.name)}
                 for column in table.columns:
-                    if column.name in present or column.server_default is None:
+                    if column.name in present or (column.server_default is None and not column.nullable):
                         continue
                     ddl = CreateColumn(column).compile(dialect=self.engine.dialect)
                     connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN {ddl}'))

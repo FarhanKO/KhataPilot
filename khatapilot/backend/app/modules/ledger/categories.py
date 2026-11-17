@@ -30,12 +30,13 @@ DEFAULT_BY_KIND = {
     "owner_drawing": "Owner withdrawal",
     "other_in": "Other income",
     "other_out": "Payments",
+    "balance_correction": "Balance correction",
 }
 
 
 def categorize(kind: str, *texts: str | None) -> str:
     """Sales stay "Sales"; purchases and expenses get a category from the item words."""
-    if kind in ("sale", "baki_sale", "baki_repayment", "baki_adjustment", "owner_drawing"):
+    if kind in ("sale", "baki_sale", "baki_repayment", "baki_adjustment", "owner_drawing", "balance_correction"):
         return DEFAULT_BY_KIND[kind]
     words = " ".join(t for t in texts if t).lower()
     for category, keys in KEYWORDS:

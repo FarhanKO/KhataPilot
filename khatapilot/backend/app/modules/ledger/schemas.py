@@ -18,11 +18,13 @@ EntryKind = Literal[
     "other_in",
     "other_out",
     "opening_balance",
+    "balance_correction",  # the owner says a balance is wrong: the difference, so the books match what is really there
 ]
 Method = Literal["cash", "bkash", "nagad", "bank", "credit"]
 LIQUID_METHODS: tuple[str, ...] = ("cash", "bkash", "nagad", "bank")
-# Kinds that are real money in or out of the shop (transfers and opening balances are not).
-CASHFLOW_EXCLUDED_KINDS = {"transfer", "opening_balance"}
+# Kinds that are not real money in or out of the shop: transfers, opening balances and balance corrections
+# change where money is, or what the books say is there, but are never a sale, an expense or profit.
+CASHFLOW_EXCLUDED_KINDS = {"transfer", "opening_balance", "balance_correction"}
 # Money the owner moved to their own savings: booked as an owner withdrawal in this category.
 SAVINGS_CATEGORY = "Personal savings"
 

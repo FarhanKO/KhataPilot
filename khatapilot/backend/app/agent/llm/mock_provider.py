@@ -398,6 +398,67 @@ def plan_baki_change(t: str) -> list[LLMToolCall] | None:
     return [call("change_baki", customer_name=name, change="set_to", amount_taka=str(target or amounts[0]))]
 
 
+# ---------------------------------------------------------------- a balance the owner says is wrong
+
+CASH_PLACE = re.compile(r"\b(?:cash|drawer|cash ?box|in hand|on hand|haate|hathe)\b|\bhate\b.*\b(?:ache|achhe)\b", re.I)
+BALANCE_FIX = re.compile(r"\b(?:should be|shud be|supposed to be|is wrong|wrong|vul|bhul|actually|asole|correct|"
+                         r"correction|fix|set|update|change|really|real|count(?:ed)?|gune|hobe|ache|achhe|is now|"
+                         r"not)\b", re.I)
+# Money moving, or another feature's words: those are entries, payments or settings, never a correction
+NOT_A_BALANCE_FIX = re.compile(r"\b(?:sold|sell|sale|bikri|bech\w*|bought|buy|purchased|kin\w*|paid|pay|pays|dilam|"
+                               r"diyechi|dilo|dise|got|received|pelam|paisi|send|sent|transfer\w*|pathao|pathalam|"
+                               r"cash ?out|cash ?in(?! hand)|withdr\w*|tul\w*|baki|buffer|limits?|sav(?:e|ing|ings)|loans?|"
+                               r"bills?|rent|forecast|short|owes?|goals?|keep|rakho)\b", re.I)
+AMOUNT_GROUP = r"(?P<a>[\d,]+(?:\.\d+)?\s*k?)"
+BALANCE_TARGET = (
+    rf"\b(?:should be|shud be|supposed to be|is actually|actually|asole|is now|is really|really|to|=)\s*"
+    rf"(?:৳|tk\.?\s*)?{AMOUNT_GROUP}",
+    rf"{AMOUNT_GROUP}\s*(?:taka|tk|/-)?\s*,?\s*(?:not|hobe|ache|achhe)\b",
+    rf"\bnot\s+(?:৳|tk\.?\s*)?[\d,]+(?:\.\d+)?\s*k?\s*(?:taka|tk)?\s*,?\s*(?:but|it'?s|its)\s*(?:৳|tk\.?\s*)?{AMOUNT_GROUP}",
+)
+
+
+def balance_method(low: str) -> str | None:
+    """Which balance the owner means; None when none or more than one is named."""
+    named = [m for m, p in (("bkash", r"\bb[ie]?kash\b"), ("nagad", r"\bnagad\b"), ("bank", r"\bbank\b"))
+             if re.search(p, low)]
+    if len(named) > 1:
+        return None
+    return named[0] if named else ("cash" if CASH_PLACE.search(low) else None)
+
+
+def plan_balance_correction(t: str) -> list[LLMToolCall] | None:
+    """The owner saying a balance in the books is wrong and what it really is ("my cash should be 5000, not
+    4000", "drawer e 5000 taka ache", "Nagad balance is actually 3000"), or None when the text is not that.
+    [] means it is a correction but which balance, or which amount, is unclear: compose() asks."""
+    low = t.lower()
+    amounts = amounts_in(t)
+    if not amounts or "?" in t or not BALANCE_FIX.search(low) or NOT_A_BALANCE_FIX.search(low):
+        return None
+    method = balance_method(low)
+    if method is None:
+        return [] if re.search(r"\b(?:balance|total|money|taka)\b", low) else None
+    target = None
+    for pattern in BALANCE_TARGET:
+        if m := re.search(pattern, low):
+            found = amounts_in(f"{m.group('a')} taka")
+            target = found[0] if found else None
+            break
+    if target is None and len(amounts) > 1:
+        return []
+    return [call("correct_balance", method=method, amount_taka=str(target or amounts[0]))]
+
+
+def balance_correction_question(text: str) -> str | None:
+    t = normalize_digits(text).strip()
+    if plan_balance_correction(t) != []:
+        return None
+    if balance_method(t.lower()) is None:
+        return ("Which balance is wrong: cash in hand, bKash, Nagad or bank? Send it as one message, for example "
+                "\"my cash should be ৳5,000\".")
+    return ("What is the right amount now? Send just the real balance, for example \"my cash should be ৳5,000\".")
+
+
 # ---------------------------------------------------------------- money a customer gave, and what one owes
 
 GAVE = r"(?:paid|pays|sent|gave|dilo|dise|dyse|dilen|pathalo|pathaise|pathaiche|pathiyeche|ferot dilo)"
@@ -530,15 +591,49 @@ def plan_goals(t: str, today: date) -> list[LLMToolCall] | None:
     return [call("set_savings_goal", name=name[:48], amount_taka=str(amounts[0]), **({"by_month": by} if by else {}))]
 
 
+# "put 15% of profit back into stock", "20% stock e dhalbo", "reinvest 10%", "let KhataPilot decide the stock share"
+REINVEST_WORDS = re.compile(r"\b(?:back into (?:the )?(?:stock|shop|business)|into stock|reinvest\w*|stock e (?:dhal\w*|"
+                            r"dibo|rakhbo|dao)|put back|stock share)\b", re.I)
+AUTO_WORDS = re.compile(r"\b(?:you decide|auto(?:matic)?|let (?:khatapilot|kp|it) (?:decide|choose|size)|tumi thik koro|"
+                        r"from my books)\b", re.I)
+# "base my savings on the last 3 months", "steadier", "3 masher gor"; "base it on last month" goes back
+THREE_MONTHS = re.compile(r"\b(?:3|three|tin)\s*(?:months?|mash\w*)\b|\bsteadier\b|\baverage\b|\bgor\b", re.I)
+LAST_MONTH_BASIS = re.compile(r"\b(?:base\w*|basis|share of|of)\s+(?:it\s+|my savings\s+|savings\s+)?(?:on\s+)?"
+                              r"last month\b|\bgoto masher\b", re.I)
+ACCOUNT_WORDS = re.compile(r"\baccount\b|\b(?:go|goes|send|sent|move|put|keep)\b[^.?!]*\bto\b|\bjabe\b|\bpathabe\b", re.I)
+
+
+def plan_reinvest(t: str) -> list[LLMToolCall] | None:
+    """How much profit the owner plans to put back into stock (the growth plan's stock path)."""
+    low = t.lower()
+    if not REINVEST_WORDS.search(low):
+        return None
+    if share := PERCENT.search(low):
+        return [call("set_reinvest_share", share_pct=int(share.group(1)))]
+    if AUTO_WORDS.search(low):
+        return [call("set_reinvest_share", automatic=True)]
+    return [call("get_growth_plan")]
+
+
 def plan_savings(t: str) -> list[LLMToolCall] | None:
-    """The owner's monthly savings: set the share, pause it, move this month's amount, or ask about it."""
+    """The owner's monthly savings: set the share, pause it, what it is a share of, where it goes, move this
+    month's amount, or ask about it."""
     low = t.lower()
     if not (SAVINGS_WORDS.search(low) or SAVE_A_SHARE.search(low)):
         return None
+    numbers = find_phone_numbers(t)
+    bank = re.search(r"(?<!\d)\d{8,20}(?!\d)", t) if re.search(r"\bbank\b", low) else None
+    if (numbers or bank) and ACCOUNT_WORDS.search(low):
+        if bank and not numbers:
+            return [call("set_savings_account", number=bank.group(0), method="bank")]
+        return [call("set_savings_account", number=numbers[0], method=method_in(low, "bkash"))]
     if re.search(r"\b(?:pause|stop|bondho)\b", low):
         return [call("set_savings_share", pause=True)]
+    basis = "three_months" if THREE_MONTHS.search(low) else "last_month" if LAST_MONTH_BASIS.search(low) else None
     if share := PERCENT.search(low):
-        return [call("set_savings_share", share_pct=int(share.group(1)))]
+        return [call("set_savings_share", share_pct=int(share.group(1)), **({"basis": basis} if basis else {}))]
+    if basis and re.search(r"\b(?:base\w*|basis|work (?:it )?out|count|use|dhoro|hisab)\b", low):
+        return [call("set_savings_share", basis=basis)]
     question = "?" in low or re.search(r"\b(?:how much|what|koto|show|status|plan|can i)\b", low)
     if MOVE_WORDS.search(low) or (not question and re.search(r"\bsave\b.*\bthis month", low)):
         amounts = [a for a in amounts_in(t) if a > 0]
@@ -578,6 +673,10 @@ def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
     if (goal_calls := plan_goals(t, today)) is not None:
         return goal_calls
 
+    # How much profit goes back into stock: "put 15% back into stock" (before growth and savings)
+    if (reinvest_calls := plan_reinvest(t)) is not None:
+        return reinvest_calls
+
     # Growing the shop (before savings: "how can I grow and save more" is a growth question)
     if GROW_WORDS.search(low):
         return [call("get_growth_plan")]
@@ -607,6 +706,10 @@ def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
     # Baki the owner forgives or corrects (before bills: "remove Babul from baki" is not a bill)
     if (baki_calls := plan_baki_change(t)) is not None:
         return baki_calls
+
+    # A balance the owner says is wrong ("my cash should be 5000, not 4000", "drawer e 5000 taka ache")
+    if (balance_calls := plan_balance_correction(t)) is not None:
+        return balance_calls
 
     # Bills the shop has to pay: list, add, change, prioritise, remove (before payments: "pay Meghna first"
     # puts Meghna's bill first, and "I have to pay Meghna 5,000 by Friday" is a due, not a payment now)
@@ -889,6 +992,11 @@ def describe(tool: str, outcome) -> str:
         if data.get("note"):
             text += f" {data['note']}"
         return text + " No money moved."
+    if tool == "correct_balance":
+        text = (f"Corrected {data.get('balance')} from {data.get('was')} to {data.get('now')}. It is booked as a "
+                f"correction, not a sale or an expense, so profit does not change. On hand now: "
+                f"{data.get('total_on_hand')}.")
+        return f"{text} {data['note']}" if data.get("note") else text
     if tool == "list_debtors":
         people = data.get("customers", [])
         if data.get("asked_about") and not people:
@@ -996,8 +1104,21 @@ def describe(tool: str, outcome) -> str:
                          for i, g in enumerate(data.get("added", []), 1))
         return (f"I set up {len(data.get('added', []))} goals from your books. {lines} Savings fill them from the "
                 "top. Say \"remove the Eid goal\" to drop one, or add your own: \"goal 35,000 for a fridge by March\".")
+    if tool == "set_reinvest_share":
+        stock = data.get("growth_plan", {}).get("put_back_into_stock", {})
+        chose = stock.get("owner_chose")
+        head = (f"Done: the growth plan now puts {chose} of each month's profit back into stock (your choice; your "
+                f"books alone would suggest {stock.get('books_suggest')})." if chose else
+                f"Done: KhataPilot sizes it from your books again, {stock.get('books_suggest')} this month. "
+                f"{stock.get('why', '')}")
+        wait = f" It starts {stock['waits']}." if stock.get("waits") else ""
+        return f"{head}{wait} It moves no money; see the paths in the Savings tab.".replace("  ", " ")
     if tool == "set_savings_share":
         share = data.get("share_of_profit")
+        if data.get("basis_changed") and not data.get("share_changed"):
+            follows = ("the middle of the last three months' profit, so one odd month moves them less"
+                       if data.get("basis") == "three_months" else "last month's profit")
+            return f"Done: your savings now follow {follows}. {data.get('headline', '')}".strip()
         if not share:
             return "Paused: no savings will be suggested until you set a share again. Nothing else changed."
         was = f" (it was {data['was']})" if data.get("was") and data["was"] != share else ""
@@ -1062,6 +1183,7 @@ def compose(brief: TurnBrief, calls: list[LLMToolCall], results: list[ToolResult
     if not calls:
         if brief.sender == "owner" and (question := bill_question(brief.owner_text, brief.today)
                                         or baki_change_question(brief.owner_text)
+                                        or balance_correction_question(brief.owner_text)
                                         or payment_question(brief.owner_text)):
             return question
         return ("I can record sales, purchases and bKash/Nagad SMS, show today's totals and balances, list who owes "

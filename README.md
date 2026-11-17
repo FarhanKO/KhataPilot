@@ -15,7 +15,7 @@ Entry for the 2026 Shenzhen International FinTech Competition, International Tra
 
 | Task | What the owner sees |
 |---|---|
-| **Bookkeeper** | Forwards a bKash or Nagad SMS, or types or says "sold 3 bags of rice ৳1,500 cash" (English, Banglish or Bangla); it is booked and today's totals come back. With the owner's Android phone connected, its bKash, Nagad and bank SMS are booked by themselves. A forged "payment received" SMS, from an ordinary number or unconfirmed by the provider, is refused. |
+| **Bookkeeper** | Forwards a bKash or Nagad SMS, or types or says "sold 3 bags of rice ৳1,500 cash" (English, Banglish or Bangla); it is booked and today's totals come back. With the owner's Android phone connected, its bKash, Nagad and bank SMS are booked by themselves. A forged "payment received" SMS, from an ordinary number or unconfirmed by the provider, is refused. If the drawer and the books disagree, "my cash should be ৳5,000" corrects the balance without touching sales or profit. |
 | **Supplier payer** | "pay Rahim Traders ৳3,000": a trusted supplier within limits is paid alone. A new payee, a changed number, a split or an over-limit payment waits for a confirmation dialog and the owner's PIN. |
 | **Guard** | A fake supplier's "send ৳50,000 to our new number", an invoice hiding "ignore previous instructions", a caller fishing for the PIN: refused, the owner alerted, the attempt logged. A big red **STOP** freezes everything. |
 | **Loan helper** | "Can I get a loan for Eid stock?": with consent, a credit band A–E scored on how the shop runs, not on collateral (the idea behind WeBank's WeiYeDai, sized for a micro-shop), with its reasons in plain words, four illustrative loan products matched on eligibility, cost and affordability, and a pre-filled application that is sent only after the owner approves. |
@@ -47,7 +47,7 @@ Every number below is filled from the result files by `scripts/update_docs.py`.
 
 | | Result |
 |---|---|
-| Tests (mock mode, no key, no network) | **<!--n:tests.passed-->907<!--/n--> of <!--n:tests.total-->907<!--/n--> pass** ([evidence/test_report.md](khatapilot/evidence/test_report.md)) |
+| Tests (mock mode, no key, no network) | **<!--n:tests.passed-->955<!--/n--> of <!--n:tests.total-->955<!--/n--> pass** ([evidence/test_report.md](khatapilot/evidence/test_report.md)) |
 | Red team, model assumed fooled | **<!--n:redteam.stopped-->115<!--/n--> of <!--n:redteam.attacks-->115<!--/n--> attacks stopped** in <!--n:redteam.categories-->18<!--/n--> categories; **<!--n:redteam.benign_passed-->42<!--/n--> of <!--n:redteam.benign-->42<!--/n-->** genuine look-alikes done as asked (false alarms <!--n:redteam.false_alarm_rate-->0.0%<!--/n-->) ([report](khatapilot/evidence/redteam_report.md)) |
 | Red team, live sample with Claude | <!--n:live.redteam.stopped-->54<!--/n--> of <!--n:live.redteam.attacks-->54<!--/n--> attacks stopped, <!--n:live.redteam.benign_passed-->18<!--/n--> of <!--n:live.redteam.benign-->18<!--/n--> genuine requests done, about <!--n:live.redteam.cost-->$0.92<!--/n--> of model usage ([report](khatapilot/evidence/redteam_report_anthropic.md)) |
 | Scripted demo, every step checked | <!--n:demo.passed-->16<!--/n--> of <!--n:demo.steps-->16<!--/n--> in mock mode, <!--n:live.demo.passed-->15<!--/n--> of <!--n:live.demo.steps-->15<!--/n--> with Claude ([evidence/INDEX.md](khatapilot/evidence/INDEX.md)) |

@@ -52,6 +52,41 @@ def test_what_kind_of_shop_decides_how_much_to_put_back():
     assert shares == sorted(shares, reverse=True) and shares[-1] == 0
 
 
+def test_how_much_to_put_back_is_sized_from_what_a_usual_month_leaves():
+    # ৳40,000 profit, ৳20,000 to the household, 10% (৳4,000) to savings: ৳16,000 left, 40% of profit.
+    room = G.ReinvestRoom(profit=taka(40_000), household=taka(20_000), savings=taka(4_000))
+    pct, why = G.suggest_reinvest(room, "steady")
+    assert pct == 20 and "at most" not in why and "(steady), 20% is the most" in why  # capped by the kind of shop
+    pct, why = G.suggest_reinvest(G.ReinvestRoom(taka(40_000), taka(32_000), taka(4_000)), "steady")
+    assert pct == 10 and "without taking from the household or your savings" in why  # ৳4,000 left: 10%
+    pct, why = G.suggest_reinvest(G.ReinvestRoom(taka(23_000), taka(24_500), 0), "up_and_down")
+    assert pct == 0 and "nothing is left over" in why and "Taking out less than the shop makes" in why
+    assert G.suggest_reinvest(G.ReinvestRoom(0, taka(5_000), 0), "steady")[0] == 0
+
+
+def test_the_room_changes_with_the_books_and_the_savings_plan():
+    lean, good = month(7, drawings=20_000), month(8, sales=330_000, drawings=10_000)
+    base = G.reinvest_room([lean, good], savings_share_pct=None)
+    saving = G.reinvest_room([lean, good], savings_share_pct=20)
+    assert saving.savings == int(base.profit * 0.2) and saving.left < base.left
+    assert G.reinvest_room([good], None).left > G.reinvest_room([lean], None).left
+
+
+def test_a_shop_waiting_for_its_cushion_is_sized_as_it_will_be():
+    assert G.ceiling_stage("cushion_first", steadiness="steady", monthly_trend=0.02) == "ready_to_grow"
+    assert G.ceiling_stage("cushion_first", steadiness="steady", monthly_trend=-0.02) == "choppy"
+    assert G.ceiling_stage("up_and_down", steadiness="moderate", monthly_trend=0.0) == "up_and_down"
+
+
+def test_moves_that_bring_cash_in_start_now_even_before_the_cushion_holds():
+    baki = G.baki_lever(taka(41_800), 13, 0.17)
+    stock = G.reinvest_lever(15, 0.17, taka(12_000), taka(1_500))
+    assert G.lead_in("cushion_first", baki) == "Start now"
+    assert G.lead_in("cushion_first", stock) == "Once it holds"
+    assert G.lead_in("steady", stock) == "First move"
+    assert "the share you chose" in G.reinvest_lever(15, 0.17, taka(12_000), taka(1_500), chosen_by_owner=True).text
+
+
 def test_putting_profit_back_into_stock_compounds_modestly():
     common = dict(base=taka(30_000), monthly_trend=0.0, margin=0.2, months=12, band=taka(5_000), first=date(2026, 10, 1))
     flat = G.project(reinvest_pct=0, start_capital=0, **common)

@@ -19,6 +19,16 @@ def only(text: str):
 
 
 @pytest.mark.parametrize(("text", "tool", "expected"), [
+    ("put 15% of profit back into stock", "set_reinvest_share", {"share_pct": 15}),
+    ("20% stock e dhalbo", "set_reinvest_share", {"share_pct": 20}),
+    ("let KhataPilot decide how much goes back into stock", "set_reinvest_share", {"automatic": True}),
+    ("should I put more back into stock?", "get_growth_plan", {}),
+    ("base my savings on the last 3 months", "set_savings_share", {"basis": "three_months"}),
+    ("save 10% of the last 3 months profit", "set_savings_share", {"share_pct": 10, "basis": "three_months"}),
+    ("base my savings on last month again", "set_savings_share", {"basis": "last_month"}),
+    ("my savings account is bKash 01712345678", "set_savings_account", {"number": "01712345678", "method": "bkash"}),
+    ("send my savings to Nagad 01812345678", "set_savings_account", {"number": "01812345678", "method": "nagad"}),
+    ("my savings go to bank account 1701500098765", "set_savings_account", {"number": "1701500098765", "method": "bank"}),
     ("sold 3 bags of rice ৳1,500 cash", "add_ledger_entry",
      {"kind": "sale", "amount_taka": "1500", "method": "cash", "item": "3 bags of rice"}),
     ("3 bosta chal 1500 taka cash e bikri", "add_ledger_entry", {"kind": "sale", "amount_taka": "1500"}),

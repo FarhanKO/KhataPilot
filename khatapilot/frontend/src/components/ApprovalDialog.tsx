@@ -161,6 +161,7 @@ function SettingsChange({ item }: { item: Pending }) {
     p.control === "limits" ? "Change your payment limits"
     : p.control === "add_payee" ? "Add a trusted payee"
     : p.control === "remove_payee" ? "Remove a trusted payee"
+    : p.control === "savings_account" ? "Where your savings go"
     : "Block a number";
   return (
     <div className="space-y-3">
@@ -182,6 +183,14 @@ function SettingsChange({ item }: { item: Pending }) {
               <Row label="Name">{p.name}</Row>
               <Row label="Number"><span className="font-mono">{maskNumber(String(p.number ?? ""))}</span></Row>
               {p.method && <Row label="Paid by">{METHOD_NAMES[String(p.method)] ?? p.method}</Row>}
+            </>
+          )}
+          {p.control === "savings_account" && (
+            <>
+              <Row label="Name">{p.name}</Row>
+              {/* the full number, so the owner can check it is their own account before entering the PIN */}
+              <Row label="Number"><span className="font-mono">{String(p.number ?? "")}</span></Row>
+              {p.method && <Row label="Method">{METHOD_NAMES[String(p.method)] ?? p.method}</Row>}
             </>
           )}
           {p.control === "block" && (

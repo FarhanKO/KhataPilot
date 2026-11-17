@@ -225,8 +225,9 @@ export function SavingsTab() {
               />
             </div>
             <p className="text-sm leading-relaxed text-muted">
-              You can also say it in chat: “save 10% of my profit every month”. The share moves no money by itself;
-              KhataPilot works out each month's amount from your books and asks for your PIN before anything leaves.
+              You can also say it in chat: “save 10% of my profit every month”, “base it on the last 3 months” or
+              “pause my savings”. The share moves no money by itself; KhataPilot works out each month's amount from
+              your books and asks for your PIN before anything leaves.
             </p>
           </div>
         </Card>
@@ -239,9 +240,13 @@ export function SavingsTab() {
           {data.account && (
             <p className="mb-4 text-sm text-muted">
               Savings go to <span className="font-mono text-ink">{data.account.number_masked}</span>, saved{" "}
-              {dayLabel(data.account.set_at)} with your PIN. Chat can never change it.
+              {dayLabel(data.account.set_at)} with your PIN.
             </p>
           )}
+          <p className="mb-4 text-sm text-muted">
+            Or type your own number in chat: “my savings account is bKash 01712345678”. Either way it changes only
+            after you enter your PIN, and never from a forwarded message.
+          </p>
           <form
             className="flex flex-wrap items-end gap-2"
             onSubmit={(e) => {

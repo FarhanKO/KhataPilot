@@ -33,8 +33,12 @@ COLLECT_SHARE = 0.5  # the collect-baki path assumes half of the overdue baki co
 TREND_CAP = 0.03
 Z_80 = 1.2816
 OVERDUE_DAYS = 14
+# The most of its profit a shop of each kind should put back into stock: the ceiling. What it actually
+# can put back is sized from its own books each month (`suggest_reinvest`).
 REINVEST_BY_STAGE: dict[Stage, int] = {"ready_to_grow": 25, "steady": 20, "up_and_down": 15, "choppy": 10,
                                        "shrinking": 0, "cushion_first": 0}
+REINVEST_STEP = 5
+CASH_KINDS = {"household", "collect_baki", "supplier_terms", "rising_cost", "margin"}  # moves that add cash now
 STAGE_LABEL: dict[Stage, str] = {
     "ready_to_grow": "Steady and growing", "steady": "Steady", "up_and_down": "Goes up and down",
     "choppy": "Choppy", "shrinking": "Sales are falling", "cushion_first": "Cushion first",
@@ -178,6 +182,61 @@ def stage_text(stage: Stage, *, monthly_trend: float, swing_pct: float | None, l
         "choppy": (f"Your takings go up and down a lot{swing}. Keep a bigger cushion and put back only a small "
                    "part of profit at a time."),
     }[stage]
+
+
+def ceiling_stage(stage: Stage, *, steadiness: str | None, monthly_trend: float) -> Stage:
+    """The kind of shop to size the stock share by: a shop that must build its cushion first (or whose sales
+    fall) is sized as it will be once that is fixed, so its "later" path is still its own."""
+    if stage not in ("cushion_first", "shrinking"):
+        return stage
+    later = stage_of(steadiness=steadiness, monthly_trend=monthly_trend, cushion_ok=True)
+    return "choppy" if later == "shrinking" else later
+
+
+@dataclass
+class ReinvestRoom:
+    """A usual month over the last three: profit, what the household took, what savings take."""
+
+    profit: int
+    household: int
+    savings: int
+
+    @property
+    def left(self) -> int:
+        return self.profit - self.household - self.savings
+
+
+def reinvest_room(recent: list[MonthBooks], savings_share_pct: int | None) -> ReinvestRoom:
+    profit = statistics.mean(max(0, m.profit) for m in recent)
+    household = statistics.mean(m.drawings for m in recent)
+    savings = profit * savings_share_pct / 100 if savings_share_pct else statistics.mean(m.savings for m in recent)
+    return ReinvestRoom(profit=int(profit), household=int(household), savings=int(savings))
+
+
+def suggest_reinvest(room: ReinvestRoom, cap_stage: Stage) -> tuple[int, str]:
+    """How much of its profit this shop can put back into stock this month, and why, in words: what is left
+    of a usual month's profit after the household and savings, never more than its kind of shop should."""
+    cap = REINVEST_BY_STAGE[cap_stage]
+    label = STAGE_LABEL[cap_stage].lower()
+    if room.profit <= 0:
+        return 0, "The last three months made no profit to put back yet."
+    # The figures shown are rounded first, so they add up exactly in the sentence.
+    profit, household, savings = whole(room.profit), whole(room.household), whole(room.savings)
+    left = profit - household - savings
+    took = f"the household took about {fmt_taka(household)}"
+    if savings > 0:
+        took += f" and savings take about {fmt_taka(savings)}"
+    usual = f"A usual month lately made about {fmt_taka(profit)} profit; {took}"
+    if left <= 0 or room.left <= 0:
+        return 0, f"{usual}, so nothing is left over to put back yet. Taking out less than the shop makes comes first."
+    room_pct = int(room.left * 100 / room.profit) // REINVEST_STEP * REINVEST_STEP
+    if room_pct <= 0:
+        return 0, f"{usual}, leaving only {fmt_taka(left)}: too little to put back yet."
+    if room_pct >= cap:
+        return cap, (f"{usual}, leaving about {fmt_taka(left)} ({room_pct}% of profit). For a shop like "
+                     f"yours ({label}), {cap}% is the most to put back at a time.")
+    return room_pct, (f"{usual}, leaving about {fmt_taka(left)}: {room_pct}% of profit, the most to put back "
+                      "without taking from the household or your savings.")
 
 
 # ---------------------------------------------------------------- the money flow
@@ -356,14 +415,25 @@ def margin_lever(recent: list[MonthBooks], earlier: list[MonthBooks]) -> Lever |
                  cash_paisa=0, monthly_paisa=whole(monthly), tab="ledger")
 
 
-def reinvest_lever(reinvest_pct: int, margin: float, extra_year: int, last_month_gain: int) -> Lever | None:
+def reinvest_lever(reinvest_pct: int, margin: float, extra_year: int, last_month_gain: int, *,
+                   chosen_by_owner: bool = False) -> Lever | None:
     if reinvest_pct <= 0 or extra_year < 500_00:
         return None
+    whose = "the share you chose" if chosen_by_owner else "what your books leave room for this month"
     return Lever(kind="reinvest", title=f"Put {reinvest_pct}% of profit back into stock",
                  text=(f"At your {margin:.0%} margin, putting {reinvest_pct}% of each month's profit back into stock "
-                       f"could add about {fmt_taka(last_month_gain)} a month to profit by month 12, "
+                       f"({whose}) could add about {fmt_taka(last_month_gain)} a month to profit by month 12, "
                        f"{fmt_taka(extra_year)} over the year. The rest is still yours to save and take home."),
                  cash_paisa=0, monthly_paisa=whole(extra_year / 12), tab="chat")
+
+
+def lead_in(stage: Stage, first: Lever) -> str:
+    """How the headline introduces the first move. While the cushion is short, a move that brings cash in
+    now (collecting baki, more supplier credit, lower costs) is the way to build it, so it starts now; only
+    putting profit into stock has to wait for the cushion."""
+    if stage != "cushion_first":
+        return "First move"
+    return "Start now" if first.kind in CASH_KINDS else "Once it holds"
 
 
 def rank(levers: list[Lever], margin: float, *, limit: int = 5) -> list[Lever]:

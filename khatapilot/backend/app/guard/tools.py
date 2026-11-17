@@ -239,6 +239,26 @@ class BakiChangeArgs(StrictArgs):
         return self
 
 
+BALANCE_NAMES = {"cash": "cash in hand", "bkash": "bKash", "nagad": "Nagad", "bank": "bank"}
+
+
+class BalanceCorrectionArgs(StrictArgs):
+    method: Literal["cash", "bkash", "nagad", "bank"] = Field(description=(
+        "Which balance is wrong: cash (the drawer, money in hand, 'hate'), bkash, nagad or bank."))
+    amount_taka: Decimal = Field(ge=0, le=10_000_000, description=(
+        "The correct balance now, exactly as the owner wrote it: what is really there, not the difference. "
+        "In 'it shows 4000 but it should be 5000' that is 5000."))
+    note: str | None = Field(default=None, max_length=200, description="Why, if the owner said.")
+
+
+def balance_correction_action(args: BalanceCorrectionArgs, _turn: TurnContext) -> ProposedAction:
+    """Grounded like any entry: the correct balance must be a number in the owner's own words."""
+    amount = to_paisa(args.amount_taka)
+    return simple_action("correct_balance", ActionKind.LEDGER_WRITE,
+                         f"Correct {BALANCE_NAMES[args.method]} to {fmt_taka(amount)}",
+                         {"amount_paisa": amount, "method": args.method})
+
+
 def baki_change_action(args: BakiChangeArgs, _turn: TurnContext) -> ProposedAction:
     """Grounded like a bill change (checks.grounded): an amount must be in the owner's words; without one
     (forgive all of it), the owner must have named the customer, so forwarded text cannot wipe out baki."""
@@ -323,11 +343,31 @@ class SavingsShareArgs(StrictArgs):
         "The share of each month's profit the owner wants to save, a whole percent exactly as they said "
         "('save 10% every month', '15 percent rakho')."))
     pause: bool = Field(default=False, description="True only when the owner asks to stop or pause saving.")
+    basis: Literal["last_month", "three_months"] | None = Field(default=None, description=(
+        "What the monthly amount is a share of, only if the owner says: 'last_month' (last month's profit) or "
+        "'three_months' (the middle of the last three months' profit, steadier: 'base it on 3 months', "
+        "'3 masher gor dhoro')."))
 
     @model_validator(mode="after")
     def _one_or_the_other(self) -> SavingsShareArgs:
-        if (self.share_pct is None) == (not self.pause):
-            raise ValueError("give either share_pct or pause=true, not both or neither")
+        if self.share_pct is not None and self.pause:
+            raise ValueError("give share_pct or pause=true, not both")
+        if self.share_pct is None and not self.pause and self.basis is None:
+            raise ValueError("give share_pct, pause=true or basis")
+        return self
+
+
+class ReinvestArgs(StrictArgs):
+    share_pct: int | None = Field(default=None, ge=5, le=50, description=(
+        "The share of each month's profit the owner wants to put back into stock, a whole percent exactly as "
+        "they said ('put 15% back into stock')."))
+    automatic: bool = Field(default=False, description=(
+        "True when the owner wants KhataPilot to size it from the books again ('you decide', 'auto')."))
+
+    @model_validator(mode="after")
+    def _one(self) -> ReinvestArgs:
+        if (self.share_pct is None) == (not self.automatic):
+            raise ValueError("give share_pct or automatic=true, not both or neither")
         return self
 
 
@@ -367,12 +407,20 @@ def goal_line(g: GoalView) -> dict[str, Any]:
             "suggested_by_khatapilot": g.set_by == "khatapilot", "why": g.why}
 
 
+BASIS_WORDS = {"last_month": "last month's profit", "three_months": "the last three months' profit (steadier)"}
+
+
 def savings_share_action(args: SavingsShareArgs, _turn: TurnContext) -> ProposedAction:
+    basis = {"basis": args.basis} if args.basis else {}
     if args.pause:
         return simple_action("set_savings_share", ActionKind.LEDGER_WRITE, "Pause the monthly savings plan",
-                             {"pause": True})
+                             {"pause": True, **basis})
+    if args.share_pct is None:
+        return simple_action("set_savings_share", ActionKind.LEDGER_WRITE,
+                             f"Base the monthly savings on {BASIS_WORDS[args.basis]}", basis)
+    of = BASIS_WORDS[args.basis] if args.basis else "each month's profit"
     return simple_action("set_savings_share", ActionKind.LEDGER_WRITE,
-                         f"Save {args.share_pct}% of each month's profit", {"share_pct": args.share_pct})
+                         f"Save {args.share_pct}% of {of}", {"share_pct": args.share_pct, **basis})
 
 
 def savings_view(status: SavingsStatus) -> dict[str, Any]:
@@ -410,6 +458,12 @@ def growth_view(plan: GrowthPlan) -> dict[str, Any]:
         "last_month": plan.flow.headline,
         "margin": f"{plan.flow.gross_margin_pct:.0f}%",
         "sales_trend": f"{plan.profile.monthly_trend_pct:+.1f}% a month",
+        "put_back_into_stock": {
+            "share_now": f"{plan.profile.reinvest_pct}%" if plan.profile.reinvest_pct else "not yet",
+            "books_suggest": f"{plan.profile.reinvest_suggested_pct}%",
+            "owner_chose": f"{plan.profile.reinvest_choice_pct}%" if plan.profile.reinvest_choice_pct else None,
+            "why": plan.profile.reinvest_why, "waits": plan.profile.reinvest_wait or None,
+        },
         "moves": [{"what": lv.title, "why": lv.text} for lv in plan.levers],
         "next_12_months": [{"path": s.label, "profit": fmt_taka(s.total_profit_paisa),
                             "more_than_now": fmt_taka(s.extra_vs_now_paisa), "savings": fmt_taka(s.savings_paisa)}
@@ -978,6 +1032,43 @@ def register_core_tools(guard: Guard) -> None:
         handler=change_baki,
     ))
 
+    def correct_balance(args: BalanceCorrectionArgs, _decision, turn: TurnContext) -> dict[str, Any]:
+        """Book the difference between what the books say and what the owner says is really there. It is
+        not a sale or an expense (see CASHFLOW_EXCLUDED_KINDS), so only the balance moves, never profit."""
+        name = BALANCE_NAMES[args.method]
+        before = guard.ledger.balances(shop).get(args.method, 0)
+        target = to_paisa(args.amount_taka)
+        if target == before:
+            raise ToolRefusal(f"The books already show {fmt_taka(before)} {name}, so nothing was changed.")
+        delta = target - before
+        guard.ledger.add_entry(NewLedgerEntry(
+            shop_id=shop, occurred_at=guard.clock.now(), kind="balance_correction",
+            direction="in" if delta > 0 else "out", method=args.method, amount_paisa=abs(delta),
+            category="Balance correction", note=args.note, source="owner_text", source_ref=turn.request_id,
+        ))
+        books = guard.ledger.balances(shop)
+        result = {"balance": name, "was": fmt_taka(before), "now": fmt_taka(books[args.method]),
+                  "raised_by" if delta > 0 else "lowered_by": fmt_taka(abs(delta)),
+                  "total_on_hand": fmt_taka(sum(books.values())),
+                  "counted_as": "a correction, not a sale or an expense"}
+        if args.method != "cash":
+            result["note"] = (f"If a {name} payment is missing from the books, recording it is better than a "
+                              f"correction. KhataPilot's nightly check compares the books with {name}'s own statement.")
+        return result
+
+    gateway.register(ToolSpec(
+        name="correct_balance",
+        description=("Correct what the books say is in cash, bKash, Nagad or bank when the owner says it is wrong "
+                     "and gives the real amount: 'my cash should be 5000, not 4000', 'drawer e 5000 taka ache', "
+                     "'Nagad balance is actually 3000', 'cash 5000 hobe'. Books the difference as a correction, "
+                     "never as a sale or an expense, so the forecast and alerts use the right balance. Not for money "
+                     "that came in or went out: that is add_ledger_entry or record_customer_payment."),
+        kind=ActionKind.LEDGER_WRITE,
+        args_model=BalanceCorrectionArgs,
+        to_action=balance_correction_action,
+        handler=correct_balance,
+    ))
+
     def recent(args: RecentArgs, _decision, _turn) -> dict[str, Any]:
         return {"entries": [
             {"when": e.occurred_at.isoformat(), "kind": e.kind, "direction": e.direction, "method": e.method,
@@ -1098,16 +1189,24 @@ def register_core_tools(guard: Guard) -> None:
 
     def set_share(args: SavingsShareArgs, _decision, _turn: TurnContext) -> dict[str, Any]:
         before = guard.savings.share()
-        guard.savings.set_share(None if args.pause else args.share_pct)
+        if args.basis:
+            guard.savings.set_basis(args.basis)
+        guard.savings.starters_added = []
+        if args.pause or args.share_pct is not None:
+            guard.savings.set_share(None if args.pause else args.share_pct)
         added = guard.savings.starters_added
-        return {**savings_view(guard.savings.status()), "was": f"{before}%" if before else None,
+        status = guard.savings.status()
+        return {**savings_view(status), "was": f"{before}%" if before else None,
+                "a_share_of": status.basis_text, "basis": status.basis, "basis_changed": bool(args.basis),
+                "share_changed": args.pause or args.share_pct is not None,
                 "starter_goals_added": [goal_line(g) for g in added]}
 
     gateway.register(ToolSpec(
         name="set_savings_share",
         description=("Set the share of each month's profit the owner saves for themself ('save 10% of my profit "
-                     "every month', '15% shonchoy koro'), or pause it (pause=true). The percent must be in the owner's "
-                     "own message. It moves no money: each month's transfer is save_to_savings, with the PIN."),
+                     "every month', '15% shonchoy koro'), or pause it (pause=true), and/or what it is a share of "
+                     "(basis: last month's profit, or the last three months', steadier). The percent must be in the "
+                     "owner's own message. It moves no money: each month's transfer is save_to_savings, with the PIN."),
         kind=ActionKind.LEDGER_WRITE,
         args_model=SavingsShareArgs,
         to_action=savings_share_action,
@@ -1240,6 +1339,35 @@ def register_core_tools(guard: Guard) -> None:
             return growth_view(guard.growth.plan())
         except ValueError as exc:
             raise ToolRefusal(f"Not enough history yet: {exc}.") from exc
+
+    def reinvest_action(args: ReinvestArgs, _turn: TurnContext) -> ProposedAction:
+        if args.automatic:
+            return simple_action("set_reinvest_share", ActionKind.LEDGER_WRITE,
+                                 "Let KhataPilot size how much profit goes back into stock", {"automatic": True})
+        return simple_action("set_reinvest_share", ActionKind.LEDGER_WRITE,
+                             f"Plan to put {args.share_pct}% of profit back into stock", {"share_pct": args.share_pct})
+
+    def set_reinvest(args: ReinvestArgs, _decision, _turn: TurnContext) -> dict[str, Any]:
+        before = guard.savings.reinvest_share()
+        guard.savings.set_reinvest_share(None if args.automatic else args.share_pct)
+        try:
+            view = growth_view(guard.growth.plan())
+        except ValueError:
+            view = {}
+        return {"was": f"{before}%" if before else "sized by KhataPilot", "growth_plan": view,
+                "note": "It moves no money: it is the share the growth plan's stock path and moves use."}
+
+    gateway.register(ToolSpec(
+        name="set_reinvest_share",
+        description=("Choose how much of each month's profit the owner plans to put back into stock (the growth "
+                     "plan's stock path): 'put 15% of profit back into stock', '20% stock e dhalbo'; or let "
+                     "KhataPilot size it from the books again (automatic=true). The percent must be in the owner's "
+                     "own message. It moves no money."),
+        kind=ActionKind.LEDGER_WRITE,
+        args_model=ReinvestArgs,
+        to_action=reinvest_action,
+        handler=set_reinvest,
+    ))
 
     def advice(_args, _decision, _turn) -> dict[str, Any]:
         facts = advice_facts(guard)
