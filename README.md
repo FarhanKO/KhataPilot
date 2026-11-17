@@ -136,7 +136,8 @@ Whatever the mode, the model only proposes; the guard decides.
 ### With Docker
 
 ```powershell
-cd khatapilot
+git clone https://github.com/FarhanKO/KhataPilot.git
+cd KhataPilot\khatapilot
 python scripts/make_env.py
 docker compose up --build
 ```
@@ -165,7 +166,7 @@ With the services running:
 .\.venv\Scripts\python.exe scripts\demo_run.py --reset-only   # reload the demo shop (before recording)
 ```
 
-It reloads the demo shop, rewinds the simulated clock to Monday 12 Oct, 10:00, and plays the whole story through the same API the web app uses, checking every step: an SMS and a typed sale booked, a forged SMS refused, the cash warning for Tue 20 Oct, overdue baki collected, reminders to the other customers who owe sent only after the owner approves, a payment made alone, Meghna's ৳42,175 bill held for the PIN and scheduled, the ৳50,000 fake supplier and the poisoned invoice refused, a split payment held, the credit profile and loan match, the application approved and sent, "what did you do this week?", STOP pausing the scheduled payment, and the audit chain verified. Then it writes `evidence/`: the transcript, the audit log and the provider's operation log (JSONL and CSV, the hash chain re-verified independently), the test report, the red-team reports and [evidence/INDEX.md](khatapilot/evidence/INDEX.md), which maps every scene to the exact log lines it produced. The video's shot list is [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+It reloads the demo shop, rewinds the simulated clock to Monday 12 Oct, 10:00, and plays the whole story through the same API the web app uses, checking every step: an SMS and a typed sale booked, a forged SMS refused, the cash warning for Tue 20 Oct, overdue baki collected, reminders to the other customers who owe sent only after the owner approves, a payment made alone, Meghna's ৳42,175 bill held for the PIN and scheduled, the ৳50,000 fake supplier and the poisoned invoice refused, a split payment held, the credit profile and loan match, the application approved and sent, "what did you do this week?", STOP pausing the scheduled payment, and the audit chain verified. Then it writes `evidence/`: the transcript, the audit log and the provider's operation log (JSONL and CSV, the hash chain re-verified independently), the test report, the red-team reports and [evidence/INDEX.md](khatapilot/evidence/INDEX.md), which maps every scene to the exact log lines it produced.
 
 ## Tests and the red team
 
@@ -218,7 +219,7 @@ The red team has <!--n:redteam.attacks-->115<!--/n--> attacks in <!--n:redteam.c
 - [docs/TECHNICAL.md](docs/TECHNICAL.md): the problem, architecture, every core algorithm, tests and evaluation, roadmap
 - [docs/SECURITY_ASSESSMENT.md](docs/SECURITY_ASSESSMENT.md): permission tiers with the code that enforces each rule, every control, red-team results, known risks, what is not solved
 - [docs/RISKS.md](docs/RISKS.md): the risk register, mapped to the OWASP Top 10 for LLM Applications
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md), [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md), [PROGRESS.md](docs/PROGRESS.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md), [PROGRESS.md](docs/PROGRESS.md)
 - Model evaluations: [Fraud Sentinel](docs/results/fraud_sentinel.md), [cash forecast](docs/results/forecast_backtest.md), [credit model](docs/results/credit_model.md), [growth plan](docs/results/growth_backtest.md)
 
 ## Data
