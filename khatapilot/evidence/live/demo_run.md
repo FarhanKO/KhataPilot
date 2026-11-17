@@ -2,7 +2,7 @@
 
 Played by `scripts/demo_run.py` on 2026-10-15T13:13:58+00:00 at commit `ca1c6a7+uncommitted` against the backend in **anthropic** mode (claude-sonnet-5-5; fraud score fraud-sentinel-mm-v1). Result: **15 of 15 steps passed**. Every name, number and amount is synthetic, and every payment went through the SIMULATED provider. Do not edit by hand. The model made 30 calls (511 input, 3,919 output, 19,229 cache-write and 165,136 cache-read tokens), about $0.12 at list prices.
 
-Scene numbers match [docs/DEMO_SCRIPT.md](../../../docs/DEMO_SCRIPT.md); audit and provider-log lines are mapped in [INDEX.md](INDEX.md).
+This live run's audit and provider logs were not exported; the mock-mode run's are mapped line by line in [INDEX.md](../INDEX.md).
 
 ## 1. A customer pays ৳1,200 by bKash; the owner forwards the SMS and it is booked
 

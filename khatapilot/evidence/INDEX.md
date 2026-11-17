@@ -18,7 +18,7 @@ Written by `scripts/export_evidence.py` on 2026-10-16T11:26:59+00:00 after the d
 
 ## The demo, scene by scene
 
-Scene numbers are the steps of [docs/DEMO_SCRIPT.md](../../docs/DEMO_SCRIPT.md) and of [demo_run.md](demo_run.md). Line numbers count from 1 in the JSONL files (in the CSV files, add one for the header).
+Scene numbers are the steps of [demo_run.md](demo_run.md). Line numbers count from 1 in the JSONL files (in the CSV files, add one for the header).
 
 | Scene | What happens | Task it proves | Audit log | Provider log | Result |
 |---:|---|---|---|---|---|

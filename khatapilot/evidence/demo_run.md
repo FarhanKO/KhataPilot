@@ -2,7 +2,7 @@
 
 Played by `scripts/demo_run.py` on 2026-10-16T11:26:58+00:00 at commit `a979de2+uncommitted` against the backend in **mock** mode (mock-gullible-v1; fraud score fraud-sentinel-mm-v1). Result: **16 of 16 steps passed**. Every name, number and amount is synthetic, and every payment went through the SIMULATED provider. Do not edit by hand.
 
-Scene numbers match [docs/DEMO_SCRIPT.md](../../docs/DEMO_SCRIPT.md); audit and provider-log lines are mapped in [INDEX.md](INDEX.md).
+Audit and provider-log lines for each scene are mapped in [INDEX.md](INDEX.md).
 
 ## 1. A customer pays ৳1,200 by bKash; the owner forwards the SMS and it is booked
 
