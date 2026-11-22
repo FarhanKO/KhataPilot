@@ -17,7 +17,10 @@ import type { CashForecast, DayTotals, Debtor, Route, SmsAskData, SmsQuestion } 
 import { Amount, Badge, Button, Eyebrow, Marker, Segmented, Stat } from "../ui";
 
 const GROUPS: { label: string; items: string[] }[] = [
-  { label: "Record", items: ["sold 3 bags of rice ৳1,500 cash", "Jamal ke 450 taka baki dilam"] },
+  {
+    label: "Record",
+    items: ["sold 3 bags of rice ৳1,500 cash", "sold 2 kg sugar and 1 ta Lux soap 260 taka bkash", "Jamal ke 450 taka baki dilam"],
+  },
   {
     label: "Ask",
     items: ["Will I run short of cash?", "who owes me money?", "Can I get a loan for Eid stock?", "what did you do this week?"],

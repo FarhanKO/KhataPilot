@@ -28,6 +28,9 @@ class LedgerEntry(Base):
     counterparty_name: Mapped[str | None] = mapped_column(String(128), default=None)
     counterparty_number: Mapped[str | None] = mapped_column(String(32), default=None)
     note: Mapped[str | None] = mapped_column(Text, default=None)
+    # What was sold or bought and how much, in the owner's words ("2 kg sugar, 1 Lux soap"). Optional:
+    # only when the owner said it.
+    product_note: Mapped[str | None] = mapped_column(String(160), default=None)
     due_date: Mapped[date | None] = mapped_column(default=None)
     days_late: Mapped[int | None] = mapped_column(default=None)
     trx_id: Mapped[str | None] = mapped_column(String(32), default=None)
@@ -96,3 +99,5 @@ class SmsQuestion(Base):
     answered_at: Mapped[datetime | None] = mapped_column(default=None)
     source: Mapped[str] = mapped_column(String(8), default="sms", server_default="sms")  # sms | typed
     method: Mapped[str] = mapped_column(String(8), default="cash", server_default="cash")  # typed only
+    # The products the owner named with the money ("for 2 kg sugar"), booked with it once they answer.
+    product_note: Mapped[str | None] = mapped_column(String(160), default=None)

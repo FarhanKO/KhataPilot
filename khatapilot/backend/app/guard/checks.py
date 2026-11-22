@@ -10,7 +10,7 @@ from datetime import date, datetime
 from app.core.actions import ActionKind, PaymentRequest, ProposedAction
 from app.core.clock import to_local
 from app.core.decisions import CheckResult, CheckStatus
-from app.core.masking import find_phone_numbers, mask_number, mask_phone, normalize_msisdn
+from app.core.masking import find_phone_numbers, mask_number, mask_phone, mask_text, normalize_msisdn
 from app.core.money import find_amounts, fmt_taka, normalize_digits
 from app.core.provenance import Provenance, TurnContext
 from app.guard.injection import InjectionReport
@@ -62,6 +62,33 @@ def named_by_owner(name: str, owner_text: str) -> bool:
     so "Meghnar bill" names Meghna Distributors."""
     said = f" {normalize_name(owner_text)} "
     return any(f" {w}" in said for w in normalize_name(name).split() if len(w) >= 3)
+
+
+# Joining words a product note may add between the owner's items ("2 kg sugar and 1 soap").
+PRODUCT_JOINERS = {"and", "with", "plus", "the", "for", "aar", "ebong"}
+
+
+def _product_words(text: str) -> tuple[set[str], list[str]]:
+    """Numbers and words of 3+ letters, with "2kg" read as "2 kg" and Bangla digits as ASCII."""
+    plain = normalize_digits(text).lower().replace(",", "")
+    plain = re.sub(r"(\d)(?=[^\d\s.])", r"\1 ", plain)
+    numbers = set(re.findall(r"\d+(?:\.\d+)?", plain))
+    words = [w for w in normalize_name(re.sub(r"\d+(?:\.\d+)?", " ", plain)).split() if len(w) >= 3]
+    return numbers, words
+
+
+def product_note_missing(note: str, owner_text: str) -> list[str]:
+    """The parts of a product note the owner did not type: every quantity must be a number in their message,
+    and every word a word they typed ("bag" fits "bags"). Empty means the note is the owner's own words."""
+    note_numbers, note_words = _product_words(note)
+    said_numbers, said_words = _product_words(owner_text)
+    missing = sorted(note_numbers - said_numbers)
+    for word in note_words:
+        if word in PRODUCT_JOINERS:
+            continue
+        if not any(said.startswith(word) or word.startswith(said) for said in said_words if len(said) >= 3):
+            missing.append(word)
+    return missing
 
 
 def _result(name: str, label: str, status: CheckStatus, detail: str, tier: int | None = None) -> CheckResult:
@@ -178,6 +205,16 @@ def grounded(ctx: CheckContext) -> CheckResult:
     if ctx.action.kind is not ActionKind.LEDGER_WRITE:
         return _result("grounded", label, CheckStatus.SKIP, "Only bookkeeping entries need grounding.")
     params = ctx.action.params
+    products = params.get("product_note")
+    also = ""
+    if isinstance(products, str) and products:
+        shown = mask_text(products)
+        if missing := product_note_missing(products, ctx.turn.owner_text):
+            return _result("grounded", label, CheckStatus.BLOCK,
+                           f"The product note “{shown}” has {', '.join(mask_text(m) for m in missing)}, which "
+                           "is not in your message, so nothing was recorded. Say the products again in your own "
+                           "words, or leave them out.")
+        also = f" The product note “{shown}” is in your own words."
     if ctx.action.tool == "record_sms":
         index = params.get("segment")
         segments = ctx.turn.segments
@@ -185,11 +222,18 @@ def grounded(ctx: CheckContext) -> CheckResult:
         segment = segments[index - 1] if valid else None
         if segment is None or segment.provenance is not Provenance.UNTRUSTED or segment.source not in SMS_SOURCES:
             return _result("grounded", label, CheckStatus.BLOCK, f"There is no forwarded SMS number {index} in this message.")
+        customer = params.get("customer")
+        if isinstance(customer, str) and customer:
+            if not named_by_owner(customer, ctx.turn.owner_text):
+                return _result("grounded", label, CheckStatus.BLOCK,
+                               f"You did not name {mask_text(customer)} in your message, so the SMS was not booked as "
+                               "money from them. Say who sent it in your own words, or leave the name out.")
+            also += f" You named {customer} as the sender yourself."
         if segment.source != "forwarded_sms":
             return _result("grounded", label, CheckStatus.PASS,
-                           "Booked straight from the SMS your phone received; nothing was retyped.")
+                           "Booked straight from the SMS your phone received; nothing was retyped." + also)
         return _result("grounded", label, CheckStatus.PASS,
-                       f"Booked straight from forwarded SMS {index}; the model retyped nothing.")
+                       f"Booked straight from forwarded SMS {index}; the model retyped nothing." + also)
     if ctx.action.tool in ("set_savings_share", "set_reinvest_share"):
         what = "your savings share" if ctx.action.tool == "set_savings_share" else "the share put back into stock"
         if params.get("pause"):
@@ -241,7 +285,7 @@ def grounded(ctx: CheckContext) -> CheckResult:
         return _result("grounded", label, CheckStatus.BLOCK,
                        f"You did not name {name} in your message, so nothing was changed.")
     if isinstance(amount, int) and amount in find_amounts(ctx.turn.owner_text):
-        return _result("grounded", label, CheckStatus.PASS, f"{fmt_taka(amount)} appears in your own message.")
+        return _result("grounded", label, CheckStatus.PASS, f"{fmt_taka(amount)} appears in your own message." + also)
     shown = fmt_taka(amount) if isinstance(amount, int) else "That amount"
     return _result("grounded", label, CheckStatus.BLOCK,
                    f"{shown} is not in your message, so nothing was recorded. KhataPilot only books amounts you typed "

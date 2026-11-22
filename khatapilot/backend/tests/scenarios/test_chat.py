@@ -10,6 +10,15 @@ def test_record_a_sale_from_typed_text(app):
     assert app.audit("execution")[-1]["decision"] == "RECORDED"
 
 
+def test_the_product_note_suggestion_shows_on_the_ledger(app):
+    out = app.chat("sold 2 kg sugar and 1 ta Lux soap 260 taka bkash")
+    assert "Recorded sale ৳260" in out["reply"] and "Product note: 2 kg sugar, 1 ta Lux soap" in out["reply"]
+    [entry] = app.http.get("/api/ledger/entries", params={"limit": 1}).json()["entries"]
+    assert (entry["amount_paisa"], entry["product_note"]) == (taka(260), "2 kg sugar, 1 ta Lux soap")
+    plain = app.chat("sold 500 taka cash")
+    assert "Product note" not in plain["reply"], "the product note is optional"
+
+
 def test_the_baki_suggestion_on_the_chat_page_records_credit_given(app):
     out = app.chat("Jamal ke 450 taka baki dilam")
     assert "Recorded baki sale ৳450" in out["reply"]

@@ -82,6 +82,12 @@ class InboxService:
         return self.session.scalar(select(PhoneSms).where(PhoneSms.shop_id == self.shop_id,
                                                           PhoneSms.question_id == question_id))
 
+    def for_trx(self, trx_id: str) -> list[PhoneSms]:
+        """Every SMS from the phone with this TrxID, newest first."""
+        return list(self.session.scalars(select(PhoneSms).where(PhoneSms.shop_id == self.shop_id,
+                                                                PhoneSms.trx_id == trx_id)
+                                         .order_by(PhoneSms.seen_at.desc(), PhoneSms.id.desc())))
+
     def recent(self, limit: int = 30) -> list[PhoneSmsView]:
         rows = self.session.scalars(select(PhoneSms).where(PhoneSms.shop_id == self.shop_id)
                                     .order_by(PhoneSms.seen_at.desc(), PhoneSms.id.desc()).limit(limit))

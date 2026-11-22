@@ -181,6 +181,32 @@ def pay_back_day(text: str, today: date) -> date | None:
     return day_in(lowered, today)
 
 
+PRODUCT_UNITS = (r"(?:bags?|bosta|boshta|kg|kgs|kilos?|gm|grams?|packets?|packs?|liters?|litres?|ltr|pcs|pieces?|"
+                 r"dozen|hali|ta|ti|boxes|box|cartons?|bottles?|cans?|bars?|tins?)")
+PRODUCT_ITEM = re.compile(
+    rf"(?<![\d.,])\d+(?:\.\d+)?\s*{PRODUCT_UNITS}\b(?:\s+of)?(?P<words>(?:\s+[A-Za-z][A-Za-z'\-]*){{1,2}})", re.I)
+# Words that end a product's name: the money, how it was paid, who, and joining words.
+NOT_PRODUCT = {"taka", "tk", "cash", "bkash", "nagad", "bank", "baki", "credit", "udhar", "due", "for", "to", "from",
+               "and", "ar", "aar", "with", "sold", "sell", "bikri", "dilam", "dilo", "nilo", "on", "at", "in", "today",
+               "ajke", "kinlam", "bought", "paid", "ke", "k", "er"}
+PRODUCT_NAMES = re.compile(r"\b(rice|chal|dal|oil|tel|sugar|chini|soap|biscuits?|milk|eggs?|atta|flour|onions?)\b", re.I)
+
+
+def products_in(text: str) -> str | None:
+    """The product note in the owner's own words: every 'quantity unit product' they wrote ("2 kg chini",
+    "3 bags of rice", "1 ta Lux soap"), joined with commas; else a product name alone; else None."""
+    found = []
+    for m in PRODUCT_ITEM.finditer(normalize_digits(text)):
+        words = m.group("words").split()
+        while words and words[-1].lower() in NOT_PRODUCT:
+            words.pop()
+        if words and words[0].lower() not in NOT_PRODUCT:
+            found.append(text[m.start():m.start("words")].strip() + " " + " ".join(words))
+    if found:
+        return ", ".join(found)
+    return m.group(0) if (m := PRODUCT_NAMES.search(text)) else None
+
+
 def method_in(text: str, default: str | None = None) -> str | None:
     lowered = text.lower()
     for method in ("bkash", "nagad", "bank"):
@@ -748,18 +774,14 @@ def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
         return calls
 
     amount = str(amounts[0]) if amounts else None
-    item = None
-    if m := re.search(r"\b\d+\s*(?:bags?|bosta|kg|kilo|packets?|liters?|litres?|pcs|dozen)\s+(?:of\s+)?(?P<item>[a-z]+)", low):
-        item = m.group(0)
-    elif m := re.search(r"\b(rice|chal|dal|oil|tel|sugar|chini|soap|biscuits?|milk|eggs?|atta|flour|onions?)\b", low):
-        item = m.group(0)
+    item = products_in(t)  # the optional product note, in the owner's own words
 
     # Money a customer gave the shop ("Babul paid 2000", "got 500 from Rina on bkash", "Jamal 300 taka dilo").
     # Paying back baki only if the owner says so ("paid back", "ferot"); otherwise the tool asks when they owe.
     if amount and (payer := customer_payer(t)):
         purpose = sms_purpose(t)
         return [call("record_customer_payment", customer_name=payer, amount_taka=amount,
-                     method=method_in(low, "cash"), purpose=purpose)]
+                     method=method_in(low, "cash"), purpose=purpose, item=item)]
 
     # Record a sale. "Jamal ke 450 taka baki dilam" is a sale on credit too: goods given, money owed.
     # ("Rahim Traders er baki 2000 taka dilam" pays off the shop's own dues; that is further down.)
@@ -790,7 +812,7 @@ def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
     if amount and re.search(r"\b(paid|dilam|diyechi|pay korsi|pay korlam|khoroch)\b", low):
         if re.search(r"\b(rent|bhara|electricity|current|bill|salary|beton|van|transport|tea)\b", low):
             return [call("add_ledger_entry", kind="expense", amount_taka=amount, method=method_in(low, "cash"),
-                         item=re.search(r"\b(rent|bhara|electricity|current|bill|salary|beton|van|transport|tea)\b",
+                         note=re.search(r"\b(rent|bhara|electricity|current|bill|salary|beton|van|transport|tea)\b",
                                         low).group(0))]
         who = m.group("n") if (m := re.search(rf"\bpaid\s+(?:to\s+)?(?P<n>{NAME}?)\s+(?:৳|tk|taka)?\s*\d", t, re.I)) else None
         return [call("add_ledger_entry", kind="supplier_payment", amount_taka=amount, method=method_in(low, "cash"),
@@ -852,14 +874,42 @@ def plan(brief: TurnBrief) -> list[LLMToolCall]:
         calls.append(call("notify_owner", message=f"A message from {brief.sender_display} {asked}. "
                                                   "KhataPilot did not act on it."))
         return calls
+    # The owner's product note goes with a forwarded SMS only when there is one SMS it can be about.
+    single_sms = sum(s.kind == "mobile_money_sms" for s in brief.segments) == 1
     for segment in brief.segments:
         if segment.kind == "owner_text":
             continue
         if segment.kind == "mobile_money_sms":
-            calls.append(call("record_sms", segment=segment.index, purpose=sms_purpose(brief.owner_text)))
+            calls.append(call("record_sms", segment=segment.index, purpose=sms_purpose(brief.owner_text),
+                              item=products_in(brief.owner_text) if single_sms else None,
+                              customer=sms_sender(brief.owner_text) if single_sms else None))
         for number, amount in money_instructions(segment.text):  # gullible on purpose
             calls.append(call("propose_payment", payee_number=number, amount_taka=str(amount)))
     return calls + plan_owner_text(brief.owner_text, brief.today)
+
+
+SENDER_NAME = r"[A-Z][a-z][A-Za-z.'\-]*(?:\s+[A-Z][a-z][A-Za-z.'\-]*){0,2}"
+SMS_SENDER = (
+    # "Jamal sent this", "Jamal Uddin gave me 500", "Jamal pathaise", "Jamal er taka", "Jamal's money"
+    re.compile(rf"\b(?P<n>{SENDER_NAME})(?:'s|\s+er)?\s+(?:has\s+|just\s+)?(?:sent|gave|paid|dilo|dise|diyeche|"
+               r"pathaise|pathalo|pathiyeche|taka|money|payment)\b"),
+    re.compile(rf"\bfrom\s+(?P<n>{SENDER_NAME})\b"),  # "money from Jamal"
+)
+NOT_A_SENDER = {"this", "that", "he", "she", "they", "it", "customer", "someone", "bkash", "nagad", "bank", "the",
+                "i", "my", "record", "book", "please", "sms", "baki"}
+
+
+def sms_sender(owner_text: str) -> str | None:
+    """Who the owner says forwarded money in is from ("Jamal sent this, not for baki"), as they wrote it.
+    Only a capitalised name counts, so "he sent it" or "bKash sent this" names nobody."""
+    for pattern in SMS_SENDER:
+        for m in pattern.finditer(owner_text):
+            words = (clip_name(m.group("n")) or "").split()
+            while words and words[0].lower() in NOT_A_SENDER:  # "Please Jamal sent" is Jamal
+                words.pop(0)
+            if words and not any(w.lower() in NOT_A_SENDER for w in words):
+                return " ".join(words)
+    return None
 
 
 def sms_purpose(owner_text: str) -> str | None:
@@ -922,6 +972,8 @@ def describe(tool: str, outcome) -> str:
     data = outcome.data if isinstance(outcome.data, dict) else {}
     if outcome.status == "blocked":
         return f"I did not do that. {outcome.message}"
+    if outcome.status == "error" and "already in your books" in outcome.message:
+        return outcome.message  # not a failure: it says what the books already have
     if outcome.status == "error":
         return f"I couldn't do that: {outcome.message}"
     if outcome.status == "asked":
@@ -942,9 +994,19 @@ def describe(tool: str, outcome) -> str:
             text += f" {data.get('counterparty')} still owes {data['customer_still_owes']}."
         if data.get("fee"):
             text += f" Fee {data['fee']} recorded too."
+        if data.get("baki_unchanged"):
+            text += f" {data.get('counterparty')}'s baki of {data['baki_unchanged']} is unchanged."
+        if data.get("products"):
+            text += f" Product note: {data['products']}."
+        if data.get("number_saved"):
+            text += f" {data['number_saved']}"
+        if data.get("earlier"):
+            text += f" {data['earlier']}"
         return text
     if tool == "add_ledger_entry":
         text = f"Recorded {data.get('recorded')} {data.get('amount')} ({data.get('method')}, {data.get('category')})."
+        if data.get("products"):
+            text += f" Product note: {data['products']}."
         if data.get("note"):
             text += f" {data['note']}"
         elif data.get("over_baki_as_sale"):
@@ -967,6 +1029,8 @@ def describe(tool: str, outcome) -> str:
                      else f" {who} still owes {data.get('customer_still_owes')}.")
         else:
             text = f"Recorded {data.get('amount')} from {who} as a sale ({data.get('method')})."
+            if data.get("products"):
+                text += f" Product note: {data['products']}."
             text += (f" Their baki of {data['owed_before']} is unchanged." if data.get("owed_before") not in (None, "৳0")
                      else f" {who} does not owe any baki.")
         return text

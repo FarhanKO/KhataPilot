@@ -41,6 +41,23 @@ def test_something_else_is_booked_as_a_sale_and_the_baki_stays(app):
     assert "as a sale" in done.json()["message"] and babul_owes(app) == 754_100
 
 
+def test_baki_added_from_chat_is_found_when_the_owner_says_who_sent_the_money(app):
+    """Obaidul's baki was typed in chat, so the books have no number for him. The owner says who sent it."""
+    def owing() -> dict[str, int]:
+        return {d["name"]: d["outstanding_paisa"] for d in app.http.get("/api/debtors").json()}
+
+    assert "Obaidul Munshi" not in owing()
+    app.chat("Obaidul Munshi ke 2000 taka baki dilam")
+    sms = app.http.post("/api/sim/incoming-payment", json={"from_number": "01811223344", "amount_taka": 500}).json()
+    other = app.chat("Obaidul sent this, not for baki", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
+    assert "Obaidul Munshi's baki of ৳2,000 is unchanged" in other["reply"], other["reply"]
+    assert "number 018XXXX3344 is saved" in other["reply"] and owing()["Obaidul Munshi"] == 200_000
+    # his number is kept, so the next payment from it is asked about without being told who it is
+    sms = app.http.post("/api/sim/incoming-payment", json={"from_number": "01811223344", "amount_taka": 700}).json()
+    out = app.chat("record this", forwarded=[{"source": "forwarded_sms", "text": sms["sms_text"]}])
+    assert "৳700 came in from Obaidul Munshi, who owes ৳2,000 of baki" in out["reply"], out["reply"]
+
+
 def test_saying_it_is_for_the_baki_up_front_skips_the_question(app):
     out = forward_payment(app, 1000, owner="Babul paid back some baki, record this")
     assert not [o for o in out["outcomes"] if o["status"] == "asked"]

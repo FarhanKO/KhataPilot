@@ -70,7 +70,8 @@ def ledger_entries(limit: int = Query(default=50, le=500), offset: int = Query(d
             entries = guard.ledger.entries(shop, limit=limit, offset=offset)
         return {"total": guard.ledger.count(shop), **page, "entries": [
             {**e.model_dump(mode="json"), "counterparty_number": _masked(e.counterparty_number),
-             "note": mask_text(e.note) if e.note else None} for e in entries]}
+             "note": mask_text(e.note) if e.note else None,
+             "product_note": mask_text(e.product_note) if e.product_note else None} for e in entries]}
 
 
 @router.get("/debtors")

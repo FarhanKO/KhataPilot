@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import Clock, local_date
 from app.core.ids import new_id
+from app.core.masking import normalize_msisdn
 from app.modules.ledger.models import LedgerEntry, Obligation, RecurringBill, SmsQuestion
 from app.core.sms import ParsedSms
 from app.modules.ledger.categories import categorize  # noqa: F401  (re-exported: part of the public API)
@@ -81,21 +82,34 @@ class LedgerService:
         return len(rows)
 
     def debtor_for_sms(self, shop_id: str, sms: ParsedSms) -> CustomerBalance | None:
-        """The customer who owes baki and sent this money in, if there is one (matched by number)."""
+        """The customer who owes baki and sent this money in, if the books can tell: a saved customer with this
+        number; else the one debtor whose baki entries carry it; else the one debtor whose name is exactly the
+        name the SMS gives. Only ever used to ask the owner, or with the owner's own word on what it is for."""
         if sms.direction != "in" or sms.txn_type == "cash_in":
             return None
-        customer = ShopService(self.session, self.clock).find_party_by_number(
-            shop_id, sms.counterparty_number, kind="customer")
-        if customer is None:
-            return None
-        return next((b for b in self.baki_by_customer(shop_id) if b.name == customer.name), None)
+        owing = self.baki_by_customer(shop_id)
+        number = sms.counterparty_number
+        customer = ShopService(self.session, self.clock).find_party_by_number(shop_id, number, kind="customer")
+        if customer is not None:
+            return next((b for b in owing if b.name == customer.name), None)
+        by_number = [b for b in owing if number and b.number == number]
+        if by_number:
+            return by_number[0] if len(by_number) == 1 else None
+        if sms.counterparty_name and not normalize_msisdn(sms.counterparty_name):
+            named = [b for b in owing if _norm(b.name) == _norm(sms.counterparty_name)]
+            if len(named) == 1:
+                return named[0]
+        return None
 
     def book_sms(self, shop_id: str, sms: ParsedSms, *, at: datetime, source_ref: str | None,
-                 purpose: SmsPurpose = "auto") -> BookedSms:
+                 purpose: SmsPurpose = "auto", product_note: str | None = None,
+                 customer: str | None = None) -> BookedSms:
         """Book a parsed notification SMS. Deterministic: money from a customer who owes baki is a
         baki repayment (unless `purpose` says it is for something else; anything over what they owe
         is a sale), otherwise a sale; money to a known supplier settles their payable; cash in and
-        cash out are transfers between the drawer and the wallet; fees are an expense."""
+        cash out are transfers between the drawer and the wallet; fees are an expense. `customer` is
+        who money in is from when the owner said so (their name as the books have it); otherwise the
+        sender is found from the books (see `debtor_for_sms`)."""
         if self.has_trx(shop_id, sms.trx_id):
             raise DuplicateSms(sms.trx_id)
         shops = ShopService(self.session, self.clock)
@@ -107,20 +121,26 @@ class LedgerService:
             entries.append(self.add_entry(NewLedgerEntry(shop_id=shop_id, occurred_at=when, source="sms",
                                                          source_ref=source_ref, **fields)))
 
-        customer = shops.find_party_by_number(shop_id, sms.counterparty_number, kind="customer")
+        party = shops.find_party_by_number(shop_id, sms.counterparty_number, kind="customer")
         supplier = shops.find_party_by_number(shop_id, sms.counterparty_number, kind="supplier") or (
             shops.find_party(shop_id, sms.counterparty_name, kind="supplier") if sms.counterparty_name else None)
         outstanding, settled, over = None, [], 0
 
         if sms.direction == "in" and sms.txn_type != "cash_in":
+            known = customer
+            if known is None and purpose != "other":
+                known = debtor.name if (debtor := self.debtor_for_sms(shop_id, sms)) else None
+            if known is None and party:
+                known = party.name
             booked = self.book_customer_payment(
-                shop_id, name=customer.name if customer else sms.counterparty_name,
+                shop_id, name=known or sms.counterparty_name,
                 number=sms.counterparty_number, amount_paisa=sms.amount_paisa, method=method,
-                purpose="other" if purpose == "other" or customer is None else "baki", occurred_at=when,
-                source="sms", source_ref=source_ref, trx_id=sms.trx_id, note=sms.reference)
+                purpose="other" if purpose == "other" or known is None else "baki", occurred_at=when,
+                source="sms", source_ref=source_ref, trx_id=sms.trx_id, note=sms.reference,
+                product_note=product_note)
             entries += booked.entries
             kind, outstanding, over = booked.kind, booked.customer_outstanding_paisa, booked.over_baki_paisa
-            who = customer.name if customer else sms.counterparty_number
+            who = known or sms.counterparty_number
         elif sms.txn_type in ("cash_in", "cash_out"):
             kind, wallet_in = "transfer", sms.txn_type == "cash_in"
             note = f"Cash in to {method}" if wallet_in else f"Cash out from {method}"
@@ -136,7 +156,8 @@ class LedgerService:
             add(kind=kind, direction="out", method=method, amount_paisa=sms.amount_paisa,
                 category=(supplier.category or "Stock purchases") if supplier else "Payments",
                 counterparty_name=supplier.name if supplier else sms.counterparty_name,
-                counterparty_number=sms.counterparty_number, trx_id=sms.trx_id, note=sms.reference)
+                counterparty_number=sms.counterparty_number, trx_id=sms.trx_id, note=sms.reference,
+                product_note=product_note)
             if supplier:
                 settled = self.apply_payment_to_payables(shop_id, supplier.name, sms.amount_paisa)
             who = supplier.name if supplier else (sms.counterparty_name or sms.counterparty_number)
@@ -162,10 +183,12 @@ class LedgerService:
 
     def book_customer_payment(self, shop_id: str, *, name: str | None, number: str | None, amount_paisa: int,
                               method: str, purpose: SmsPurpose, occurred_at: datetime, source: str,
-                              source_ref: str | None, trx_id: str | None = None, note: str | None = None) -> BookedSms:
+                              source_ref: str | None, trx_id: str | None = None, note: str | None = None,
+                              product_note: str | None = None) -> BookedSms:
         """Money a customer gave the shop. Against their baki unless `purpose` is "other": up to what they owe,
         and anything over that is a sale. Someone who owes nothing (or "other") is a sale. `name` must already be
-        the customer's name as the books have it."""
+        the customer's name as the books have it. A product note goes on the sale part when there is one, else
+        on the repayment."""
         owes = None
         if purpose != "other" and name:
             owes = next((b for b in self.baki_by_customer(shop_id) if b.name == name), None)
@@ -177,12 +200,14 @@ class LedgerService:
                 method=method, counterparty_name=name, counterparty_number=number, **fields)))
 
         repaid = min(amount_paisa, owes.outstanding_paisa) if owes else amount_paisa
+        split = bool(owes) and amount_paisa > repaid
         add(kind="baki_repayment" if owes else "sale", amount_paisa=repaid,
-            category="Baki collected" if owes else "Sales", trx_id=trx_id, note=note)
+            category="Baki collected" if owes else "Sales", trx_id=trx_id, note=note,
+            product_note=None if split else product_note)
         over = 0
-        if owes and amount_paisa > repaid:  # paid more than they owed: the rest is a sale
+        if split:  # paid more than they owed: the rest is a sale
             over = amount_paisa - repaid
-            add(kind="sale", amount_paisa=over, category="Sales",
+            add(kind="sale", amount_paisa=over, category="Sales", product_note=product_note,
                 note=f"Rest of TrxID {trx_id}, over the baki owed" if trx_id else "The part over the baki owed")
         outstanding = None
         if owes:
@@ -193,12 +218,12 @@ class LedgerService:
 
     def ask_about_typed(self, shop_id: str, *, debtor: CustomerBalance, amount_paisa: int, method: str,
                         request_id: str | None, conversation_id: str | None,
-                        decision_id: str | None) -> SmsQuestionView:
+                        decision_id: str | None, product_note: str | None = None) -> SmsQuestionView:
         """Money the owner typed in from a customer who owes baki, held unbooked like a forwarded SMS."""
         row = SmsQuestion(id=new_id("smsq"), shop_id=shop_id, request_id=request_id, conversation_id=conversation_id,
                           decision_id=decision_id, trx_id="", sms_text="", customer_name=debtor.name,
                           owed_paisa=debtor.outstanding_paisa, amount_paisa=amount_paisa, created_at=self.clock.now(),
-                          source="typed", method=method)
+                          source="typed", method=method, product_note=product_note)
         self.session.add(row)
         self.session.flush()
         return SmsQuestionView.model_validate(row)
@@ -207,7 +232,7 @@ class LedgerService:
 
     def ask_about_sms(self, shop_id: str, *, sms_text: str, sms: ParsedSms, debtor: CustomerBalance,
                       request_id: str | None, conversation_id: str | None,
-                      decision_id: str | None) -> SmsQuestionView:
+                      decision_id: str | None, product_note: str | None = None) -> SmsQuestionView:
         """Hold this SMS unbooked. Forwarding the same SMS again while it is waiting reuses the question."""
         open_one = self.session.scalar(select(SmsQuestion).where(
             SmsQuestion.shop_id == shop_id, SmsQuestion.trx_id == sms.trx_id, SmsQuestion.status == "open"))
@@ -216,8 +241,11 @@ class LedgerService:
                                    conversation_id=conversation_id, decision_id=decision_id,
                                    trx_id=sms.trx_id, sms_text=sms_text, customer_name=debtor.name,
                                    owed_paisa=debtor.outstanding_paisa, amount_paisa=sms.amount_paisa,
-                                   created_at=self.clock.now())
+                                   created_at=self.clock.now(), product_note=product_note)
             self.session.add(open_one)
+            self.session.flush()
+        elif product_note:  # forwarded again, now with what it was for
+            open_one.product_note = product_note
             self.session.flush()
         return SmsQuestionView.model_validate(open_one)
 
@@ -239,6 +267,19 @@ class LedgerService:
             LedgerEntry.shop_id == shop_id, LedgerEntry.trx_id == trx_id
         )
         return self.session.scalar(query) > 0
+
+    def entries_for_trx(self, shop_id: str, trx_id: str) -> list[LedgerEntryView]:
+        """Everything one SMS booked: the entry with its TrxID, the part over the baki booked as a sale, and
+        the fee (those two carry the TrxID in their note), oldest first."""
+        query = select(LedgerEntry).where(LedgerEntry.shop_id == shop_id, or_(
+            LedgerEntry.trx_id == trx_id,
+            LedgerEntry.note.in_([f"Rest of TrxID {trx_id}, over the baki owed", f"Fee for {trx_id}"])))
+        rows = self.session.scalars(query.order_by(LedgerEntry.created_at, LedgerEntry.id))
+        return [LedgerEntryView.model_validate(r) for r in rows]
+
+    def open_question_for_trx(self, shop_id: str, trx_id: str) -> SmsQuestion | None:
+        return self.session.scalar(select(SmsQuestion).where(
+            SmsQuestion.shop_id == shop_id, SmsQuestion.trx_id == trx_id, SmsQuestion.status == "open"))
 
     def add_obligation(self, obligation: NewObligation) -> ObligationView:
         row = Obligation(id=new_id("obl"), created_at=self.clock.now(), status="open", **obligation.model_dump())
@@ -389,7 +430,7 @@ class LedgerService:
         numbers: dict[str, str | None] = {}
         for name, number, kind, direction, amount, day, due in rows:
             key = name or number or "Unknown"
-            numbers.setdefault(key, number)
+            numbers[key] = numbers.get(key) or number  # the first number any of their entries carries
             queue = queues[key]
             if raises_baki(kind, direction):
                 queue.append([day, amount, due])

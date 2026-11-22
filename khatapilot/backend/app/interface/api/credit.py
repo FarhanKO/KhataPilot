@@ -151,7 +151,8 @@ def export(container=Depends(get_container), _owner: Sender = Depends(require_ow
             "exported_at": container.clock.now().isoformat(),
             "shop": profile.model_dump(mode="json", exclude={"owner_phone"}) if profile else None,
             "ledger": [{**e.model_dump(mode="json"), "counterparty_number": _masked(e.counterparty_number),
-                        "note": mask_text(e.note) if e.note else None} for e in entries],
+                        "note": mask_text(e.note) if e.note else None,
+                        "product_note": mask_text(e.product_note) if e.product_note else None} for e in entries],
             "obligations": [{**o.model_dump(mode="json"), "counterparty_number": _masked(o.counterparty_number)}
                             for o in guard.ledger.open_obligations(shop_id)],
             "payments": [{**p.model_dump(mode="json", exclude={"idempotency_key"}),

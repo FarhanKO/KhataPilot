@@ -189,6 +189,75 @@ def test_money_from_a_customer_who_owes_baki_is_asked_about_first(world):
     assert phone_status(world)["recent"][0]["status"] == "booked"
 
 
+# ---- the same SMS forwarded in chat after the phone brought it in
+
+def forward(app: App, text: str, sms: str) -> str:
+    return app.chat(text, forwarded=[{"source": "forwarded_sms", "text": sms}])["reply"]
+
+
+def entries_with(app: App, trx_id: str) -> int:
+    entries = app.http.get("/api/ledger/entries", params={"limit": 200}).json()
+    rows = entries if isinstance(entries, list) else entries.get("entries", [])
+    return sum(1 for e in rows if e.get("trx_id") == trx_id)
+
+
+def test_forwarding_an_sms_the_phone_booked_says_what_was_booked(world):
+    payment = paid_in(world, "01811998877", 1200)
+    assert deliver(world, "bKash", payment["sms_text"]).json()["booked"] == 1
+    reply = forward(world, "record this", payment["sms_text"])
+    assert reply.startswith(f"TrxID {payment['trx_id']} is already in your books"), reply
+    assert "Your phone brought it in on" in reply and "৳1,200 from 018XXXX8877 as a sale" in reply
+    assert "couldn't" not in reply
+    assert entries_with(world, payment["trx_id"]) == 1
+
+
+def test_forwarding_a_baki_payment_the_phone_booked_shows_the_baki_left(world):
+    payment = paid_in(world, BABUL, 800)
+    deliver(world, "bKash", payment["sms_text"])
+    [row] = phone_status(world)["recent"]
+    world.http.post(f"/api/sms-questions/{row['question_id']}/answer", json={"purpose": "baki"})
+    reply = forward(world, "record this", payment["sms_text"])
+    assert "৳800 from Babul Mia against their baki" in reply, reply
+    assert "Babul Mia owes" in reply or "Babul Mia has no baki left" in reply
+
+
+def test_saying_a_different_purpose_is_pointed_out_not_changed(world):
+    payment = paid_in(world, BABUL, 800)
+    deliver(world, "bKash", payment["sms_text"])
+    [row] = phone_status(world)["recent"]
+    world.http.post(f"/api/sms-questions/{row['question_id']}/answer", json={"purpose": "other"})
+    reply = forward(world, "he paid back baki", payment["sms_text"])
+    assert "৳800 from Babul Mia as a sale" in reply, reply
+    assert "You said it was for Babul Mia's baki, but it was booked as a sale. I did not change it" in reply
+
+
+def test_forwarding_an_sms_that_waits_for_an_answer_books_it_and_closes_the_wait(world):
+    payment = paid_in(world, BABUL, 800)
+    assert deliver(world, "bKash", payment["sms_text"]).json()["asked"] == 1
+    reply = forward(world, "he paid back baki", payment["sms_text"])
+    assert "Booked the bKash SMS" in reply and "it no longer waits" in reply, reply
+    [row] = phone_status(world)["recent"]
+    assert row["status"] == "booked"
+    answer = world.http.post(f"/api/sms-questions/{row['question_id']}/answer", json={"purpose": "baki"})
+    assert answer.status_code != 200, "the question was closed when the chat booked it"
+    assert entries_with(world, payment["trx_id"]) == 1
+
+
+def test_forwarding_an_sms_that_waits_for_review_points_to_it(world):
+    sms = unknown_trx("45,000.00", trx="ZZQ9X81KD3")
+    assert deliver(world, "bKash", sms).json()["review"] == 1
+    reply = forward(world, "record this", sms)
+    assert "Booked" not in reply and "waiting for you in the Ledger tab under Phone SMS" in reply, reply
+    assert phone_status(world)["recent"][0]["status"] == "review"
+
+
+def test_forwarding_a_fake_the_phone_caught_warns_again(world):
+    sms = unknown_trx("5,000.00")
+    deliver(world, "+8801712345678", sms)
+    reply = forward(world, "record this", sms)
+    assert "Booked" not in reply and "017XXXX5678" in reply and "looks like a fake" in reply, reply
+
+
 def test_a_sender_that_does_not_match_the_text_waits_for_the_owner(world):
     payment = paid_in(world, "01811998877", 700)
     assert deliver(world, "NAGAD", payment["sms_text"]).json()["review"] == 1

@@ -201,6 +201,8 @@ export interface LedgerEntry {
   counterparty_name: string | null;
   counterparty_number: string | null;
   note: string | null;
+  /** What was sold or bought and how much, in the owner's words; only when they said it. */
+  product_note: string | null;
   trx_id: string | null;
   source: string;
 }

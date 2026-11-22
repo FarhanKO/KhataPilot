@@ -51,6 +51,24 @@ class ShopService:
         row = self.session.scalars(query.limit(1)).first()
         return PartyView.model_validate(row) if row else None
 
+    def remember_customer_number(self, shop_id: str, name: str, number: str | None) -> bool:
+        """The owner confirmed that money from `number` came from customer `name`: keep the number on their record,
+        so the next SMS from it is matched to them without asking. Never moves a number that already belongs to a
+        customer, and never replaces a number the customer already has. True when something was saved."""
+        if not number or not name.strip() or self.find_party_by_number(shop_id, number, kind="customer"):
+            return False
+        wanted = _norm(name)
+        row = next((p for p in self.session.scalars(select(Party).where(
+            Party.shop_id == shop_id, Party.kind == "customer")) if _norm(p.name) == wanted), None)
+        if row is None:
+            self.add_party(shop_id, NewParty(kind="customer", name=name.strip(), number=number))
+            return True
+        if row.number:
+            return False
+        row.number = number
+        self.session.flush()
+        return True
+
     def find_party(self, shop_id: str, name: str, kind: str | None = None) -> PartyView | None:
         """Case- and punctuation-insensitive name match; a unique prefix also matches."""
         wanted = _norm(name)

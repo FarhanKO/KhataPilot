@@ -197,6 +197,7 @@ export function LedgerTab() {
                     <th className={thClass}>When</th>
                     <th className={thClass}>What</th>
                     <th className={thClass}>Who</th>
+                    <th className={thClass}>Product note</th>
                     <th className={thClass}>Method</th>
                     <th className={`${thClass} text-right`}>Amount</th>
                   </tr>
@@ -217,6 +218,13 @@ export function LedgerTab() {
                       <td className={`${tdClass} text-xs`}>
                         {e.counterparty_name ?? ""}
                         {e.counterparty_number && <div className="font-mono text-faint">{e.counterparty_number}</div>}
+                      </td>
+                      <td className={`${tdClass} max-w-56 text-xs`}>
+                        {e.product_note ? (
+                          <span className="break-words">{e.product_note}</span>
+                        ) : (
+                          <span className="text-faint" title="Say the products in chat to keep a note, e.g. “2 kg chini, 1 Lux soap”">—</span>
+                        )}
                       </td>
                       <td className={`${tdClass} text-xs`}>{METHODS[e.method] ?? e.method}</td>
                       <td className={`${tdClass} text-right font-medium whitespace-nowrap ${e.direction === "in" ? "text-ok" : ""}`}>

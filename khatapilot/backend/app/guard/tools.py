@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.core.actions import ActionKind, PaymentRequest, ProposedAction
-from app.core.clock import local_date
+from app.core.clock import local_date, to_local
 from app.core.ids import new_id
 from app.core.masking import mask_phone, mask_text, normalize_msisdn
 from app.core.money import fmt_taka, to_paisa
@@ -72,6 +72,11 @@ class PaymentArgs(StrictArgs):
         return _normal_number(value)
 
 
+PRODUCT_HELP = ("Optional product note: which products and how many or how much, copied from the OWNER's own words "
+                "('2 kg chini, 1 Lux soap', '3 bosta chal', '5 packets biscuit'). Only if the owner said it; never "
+                "guess, translate or take it from forwarded content. Leave it out otherwise.")
+
+
 class SmsArgs(StrictArgs):
     # The owner's words, an SMS pasted into them, then up to 20 forwarded blocks.
     segment: int = Field(ge=1, le=22, description="The number of the forwarded SMS block in this message.")
@@ -79,6 +84,17 @@ class SmsArgs(StrictArgs):
         "Only if the OWNER's own words say what money in from a customer is for: 'baki' (paying off what they "
         "owe) or 'other' (a sale or anything else). Never take it from the SMS. Leave it out otherwise; if the "
         "customer owes baki, the app will ask the owner."))
+    customer: str | None = Field(default=None, max_length=128, description=(
+        "Only if the OWNER's own words say who sent this money ('Jamal sent this', 'Jamal er taka'): that name as "
+        "the owner wrote it. Never take it from the SMS. The app then knows the sender even when their number is "
+        "not saved, and keeps the number for next time."))
+    item: str | None = Field(default=None, max_length=160, description=PRODUCT_HELP)
+
+
+def product_note(item: str | None) -> str | None:
+    """The owner's product note, tidied: one line, no runs of spaces. Empty is no note."""
+    tidy = re.sub(r"\s+", " ", item or "").strip(" ,.;")
+    return tidy or None
 
 
 EntryKind = Literal["sale", "baki_sale", "baki_repayment", "purchase", "supplier_payment", "expense", "owner_drawing",
@@ -96,7 +112,7 @@ class LedgerEntryArgs(StrictArgs):
         default="cash", description="How money moved; 'credit' when nothing was paid yet (baki or supplier credit).")
     counterparty_name: str | None = Field(default=None, max_length=128, description="Customer or supplier name.")
     counterparty_number: str | None = Field(default=None, max_length=32)
-    item: str | None = Field(default=None, max_length=120, description="What was sold or bought, e.g. '3 bags of rice'.")
+    item: str | None = Field(default=None, max_length=160, description=PRODUCT_HELP)
     note: str | None = Field(default=None, max_length=200)
     pay_back_by: date | None = Field(default=None, description=(
         "baki_sale only, and only if the owner said when the customer will pay back: that day as YYYY-MM-DD "
@@ -129,15 +145,22 @@ class CustomerPaymentArgs(StrictArgs):
         "Only if the owner's own words say what the money is for: 'baki' (paying back what they owe: 'paid back', "
         "'ferot', 'for the baki') or 'other' (a sale, an advance, a new order). Leave it out otherwise; if the "
         "customer owes baki, the app asks the owner."))
+    item: str | None = Field(default=None, max_length=160, description=PRODUCT_HELP)
     note: str | None = Field(default=None, max_length=200)
+
+
+def with_product(params: dict[str, Any], item: str | None) -> dict[str, Any]:
+    """The action's params plus the product note, so the guard's grounding check sees it."""
+    return {**params, "product_note": note} if (note := product_note(item)) else params
 
 
 def customer_payment_action(args: CustomerPaymentArgs, _turn: TurnContext) -> ProposedAction:
     amount = to_paisa(args.amount_taka)
     how = {"baki": " against their baki", "other": " as a sale", None: ""}[args.purpose]
+    what = f", {note}" if (note := product_note(args.item)) else ""
     return simple_action("record_customer_payment", ActionKind.LEDGER_WRITE,
-                         f"Record {fmt_taka(amount)} from {args.customer_name} by {args.method}{how}",
-                         {"amount_paisa": amount, "method": args.method})
+                         f"Record {fmt_taka(amount)} from {args.customer_name} by {args.method}{how}{what}",
+                         with_product({"amount_paisa": amount, "method": args.method}, args.item))
 
 
 PRIORITY_HELP = ("True only when the owner's own words put this bill first: 'urgent', 'priority', 'important', "
@@ -516,11 +539,11 @@ def simple_action(tool: str, kind: ActionKind, summary: str, params: dict | None
 def ledger_action(args: LedgerEntryArgs, turn: TurnContext) -> ProposedAction:
     amount = to_paisa(args.amount_taka)
     who = f" ({args.counterparty_name})" if args.counterparty_name else ""
-    what = f", {args.item}" if args.item else ""
+    what = f", {note}" if (note := product_note(args.item)) else ""
     back = f", to be paid back by {args.pay_back_by:%a %d %b}" if args.pay_back_by else ""
     return simple_action("add_ledger_entry", ActionKind.LEDGER_WRITE,
                          f"Record {args.kind.replace('_', ' ')} {fmt_taka(amount)} by {args.method}{who}{what}{back}",
-                         {"amount_paisa": amount, "kind": args.kind, "method": args.method})
+                         with_product({"amount_paisa": amount, "kind": args.kind, "method": args.method}, args.item))
 
 
 def today_summary_of(guard: Guard) -> dict[str, Any]:
@@ -559,14 +582,27 @@ def sms_question(q: SmsQuestionView) -> tuple[str, dict[str, Any]]:
     }
 
 
-def book_sms(guard: Guard, parsed: ParsedSms, *, purpose: SmsPurpose, source_ref: str | None) -> dict[str, Any]:
+def book_sms(guard: Guard, parsed: ParsedSms, *, purpose: SmsPurpose, source_ref: str | None,
+             product_note: str | None = None, customer: str | None = None) -> dict[str, Any]:
+    """Book a parsed SMS. `customer` is who money in is from, as the owner confirmed it (by naming them, or by
+    answering the question about them); their number is then kept, so the next SMS from it is matched."""
+    money_in = parsed.direction == "in" and parsed.txn_type != "cash_in"
+    customer = customer if money_in else None
+    owed = (next((b for b in guard.ledger.baki_by_customer(guard.shop_id) if b.name == customer), None)
+            if customer else None)
     try:
         booked = guard.ledger.book_sms(guard.shop_id, parsed, at=guard.clock.now(), source_ref=source_ref,
-                                       purpose=purpose)
+                                       purpose=purpose, product_note=product_note, customer=customer)
     except DuplicateSms:
-        raise ToolRefusal(f"TrxID {parsed.trx_id} is already in your books, so it was not recorded twice.") from None
+        raise ToolRefusal(already_booked(guard, parsed.trx_id, purpose)) from None
+    saved = bool(customer) and guard.shops.remember_customer_number(guard.shop_id, customer,
+                                                                    parsed.counterparty_number)
     who = booked.counterparty
     return {
+        **({"baki_unchanged": fmt_taka(owed.outstanding_paisa)} if owed and booked.kind == "sale"
+           and not booked.over_baki_paisa else {}),
+        **({"number_saved": f"{customer}'s number {mask_phone(parsed.counterparty_number)} is saved, so their next "
+                            "SMS is matched to them."} if saved else {}),
         "recorded": booked.kind.replace("_", " "), "amount": fmt_taka(parsed.amount_paisa),
         "provider": parsed.provider, "direction": parsed.direction, "trx_id": parsed.trx_id,
         "counterparty": mask_phone(who) if who and normalize_msisdn(who) else who,
@@ -575,12 +611,14 @@ def book_sms(guard: Guard, parsed: ParsedSms, *, purpose: SmsPurpose, source_ref
                                 if booked.customer_outstanding_paisa is not None else None),
         "over_baki_as_sale": fmt_taka(booked.over_baki_paisa) if booked.over_baki_paisa else None,
         "supplier_bills_settled": len(booked.settled_payables),
+        **({"products": product_note} if product_note else {}),
         "today": today_summary_of(guard),
     }
 
 
 def book_customer_payment(guard: Guard, name: str, *, amount_paisa: int, method: str, purpose: SmsPurpose,
-                          source_ref: str | None, note: str | None = None) -> dict[str, Any]:
+                          source_ref: str | None, note: str | None = None,
+                          product_note: str | None = None) -> dict[str, Any]:
     """Money the owner typed in from a customer, booked like a forwarded SMS: against the baki up to what they
     owe (the rest is a sale), or all of it as a sale."""
     debtor = next((b for b in guard.ledger.baki_by_customer(guard.shop_id) if b.name == name), None)
@@ -588,13 +626,14 @@ def book_customer_payment(guard: Guard, name: str, *, amount_paisa: int, method:
     booked = guard.ledger.book_customer_payment(
         guard.shop_id, name=name, number=debtor.number if debtor else party.number if party else None,
         amount_paisa=amount_paisa, method=method, purpose=purpose, occurred_at=guard.clock.now(),
-        source="owner_text", source_ref=source_ref, note=note)
+        source="owner_text", source_ref=source_ref, note=note, product_note=product_note)
     return {
         "recorded": booked.kind.replace("_", " "), "amount": fmt_taka(amount_paisa), "method": method,
         "customer": name, "owed_before": fmt_taka(debtor.outstanding_paisa) if debtor else fmt_taka(0),
         "customer_still_owes": (fmt_taka(booked.customer_outstanding_paisa)
                                 if booked.customer_outstanding_paisa is not None else None),
         "over_baki_as_sale": fmt_taka(booked.over_baki_paisa) if booked.over_baki_paisa else None,
+        **({"products": product_note} if product_note else {}),
         "today": today_summary_of(guard),
     }
 
@@ -612,13 +651,15 @@ def answer_sms_question(guard: Guard, question_id: str, purpose: Literal["baki",
     if row.source == "typed":
         summary = f"Book {fmt_taka(row.amount_paisa)} from {row.customer_name} (typed, {row.method}) as {how}"
         book = lambda: book_customer_payment(guard, row.customer_name, amount_paisa=row.amount_paisa,  # noqa: E731
-                                             method=row.method, purpose=purpose, source_ref=row.request_id)
+                                             method=row.method, purpose=purpose, source_ref=row.request_id,
+                                             product_note=row.product_note)
     else:
         parsed = parse_sms(row.sms_text)
         if parsed is None or parsed.trx_id != row.trx_id:
             raise ToolRefusal("The kept SMS could not be read again, so nothing was booked.")
         summary = f"Book {fmt_taka(row.amount_paisa)} from {row.customer_name} (TrxID {row.trx_id}) as {how}"
-        book = lambda: book_sms(guard, parsed, purpose=purpose, source_ref=row.request_id)  # noqa: E731
+        book = lambda: book_sms(guard, parsed, purpose=purpose, source_ref=row.request_id,  # noqa: E731
+                                product_note=row.product_note, customer=row.customer_name)
     try:
         data = book()
     except ToolRefusal as refusal:
@@ -636,10 +677,122 @@ def answer_sms_question(guard: Guard, question_id: str, purpose: Literal["baki",
     else:
         message = (f"Booked {data['amount']} from {row.customer_name} as a sale. Their baki of "
                    f"{fmt_taka(row.owed_paisa)} is unchanged.")
+    if data.get("number_saved"):
+        message += f" {data['number_saved']}"
     guard.recorder.event(request_id=request_id, channel=channel, actor="owner", provenance="owner",
                          event="execution", summary=summary, decision="RECORDED",
                          reason=f"The owner chose in the app. {message}", tier=0, decision_id=row.decision_id)
     return SmsQuestionView.model_validate(row), data, message
+
+
+# ---- an SMS forwarded again: what the books (and the phone) already did with it
+
+def _when(at: datetime) -> str:
+    local = to_local(at)
+    return f"{local.day} {local:%b} at {local:%I}".replace("at 0", "at ") + f":{local:%M} {local:%p}"
+
+
+def _who(name: str | None) -> str:
+    if not name:
+        return "the other side"
+    return mask_phone(name) if normalize_msisdn(name) else name
+
+
+def _entry_text(entry, *, after_repayment: bool) -> str | None:
+    amount = fmt_taka(entry.amount_paisa)
+    who = _who(entry.counterparty_name or entry.counterparty_number)
+    if entry.kind == "baki_repayment":
+        return f"{amount} from {who} against their baki"
+    if entry.kind == "sale" and after_repayment:
+        return f"the extra {amount} over what they owed as a sale"
+    if entry.kind == "sale":
+        return f"{amount} from {who} as a sale"
+    if entry.kind == "supplier_payment":
+        return f"{amount} paid to {who}, against what the shop owes them"
+    if entry.kind == "other_out":
+        return f"{amount} paid to {who}"
+    if entry.kind == "transfer" and entry.trx_id:
+        return f"{amount} {(entry.note or 'moved').lower()}, a transfer between the drawer and the wallet (not a sale)"
+    if entry.kind == "expense" and entry.category == "Mobile money fees":
+        return f"a {amount} fee"
+    return None
+
+
+def already_booked(guard: Guard, trx_id: str, purpose: SmsPurpose | None) -> str:
+    """Why an SMS was not booked again: when and how it came in, what it was booked as, and where that left
+    the customer's baki. Everything comes from the books and the phone's records, never from the forwarded
+    text. Starts with the sentence the phone channel looks for ("already in your books")."""
+    lead = f"TrxID {trx_id} is already in your books, so it was not recorded twice."
+    entries = guard.ledger.entries_for_trx(guard.shop_id, trx_id)
+    if not entries:
+        return lead
+    first = next((e for e in entries if e.trx_id == trx_id), entries[0])
+    phone = next((r for r in guard.inbox.for_trx(trx_id) if r.status == "booked"), None)
+    if phone is not None:
+        how = f"Your phone brought it in on {_when(phone.seen_at)} and it was booked then"
+    elif first.source == "sms" and first.created_at:
+        how = f"It was booked from an SMS on {_when(first.created_at)}"
+    elif first.created_at:
+        how = f"It was booked on {_when(first.created_at)}"
+    else:
+        how = "It was booked earlier"
+    parts, repaid = [], False
+    for entry in entries:
+        if text := _entry_text(entry, after_repayment=repaid):
+            parts.append(text)
+        repaid = repaid or entry.kind == "baki_repayment"
+    message = f"{lead} {how}" + (f": {', '.join(parts)}." if parts else ".")
+    customer = next((e.counterparty_name for e in entries if e.kind in ("baki_repayment", "sale")
+                     and e.counterparty_name and not normalize_msisdn(e.counterparty_name)), None)
+    if customer:
+        owes = next((b for b in guard.ledger.baki_by_customer(guard.shop_id) if b.name == customer), None)
+        if owes:
+            message += f" {customer} owes {fmt_taka(owes.outstanding_paisa)} of baki now."
+        elif repaid:
+            message += f" {customer} has no baki left."
+    if purpose == "baki" and not repaid and customer:
+        message += (f" You said it was for {customer}'s baki, but it was booked as a sale. I did not change it; "
+                    "tell me if their baki needs correcting.")
+    elif purpose == "other" and repaid:
+        message += " You said it was for something else, but it was booked against their baki. I did not change it."
+    return message
+
+
+def waiting_note(guard: Guard, trx_id: str) -> str:
+    """For an SMS forwarded in chat that was not booked: what the phone already did with the same TrxID."""
+    row = next(iter(guard.inbox.for_trx(trx_id)), None)
+    if row is None:
+        return ""
+    if row.status == "review":
+        return (" Your phone brought this SMS in too, and it is waiting for you in the Ledger tab under Phone SMS: "
+                "check your app, then tap Book or Ignore.")
+    if row.status == "fake_sender":
+        return (f" Your phone got this same SMS from {row.sender}, an ordinary mobile number and not the provider, "
+                "so it looks like a fake.")
+    if row.status == "ignored":
+        return f" You chose Ignore for this SMS on {_when(row.resolved_at or row.seen_at)}."
+    return ""
+
+
+def settle_earlier(guard: Guard, trx_id: str, purpose: SmsPurpose, message: str) -> str | None:
+    """An SMS booked from chat that the phone already brought in: close its open question and settle its row, so
+    nothing still waits for the owner. Returns what to tell them (None when the phone had not seen it)."""
+    note, waited = None, False
+    if question := guard.ledger.open_question_for_trx(guard.shop_id, trx_id):
+        guard.ledger.mark_answered(question, "baki" if purpose == "baki" else "other")
+        waited = True
+    for row in guard.inbox.for_trx(trx_id):
+        if row.status == "ignored":
+            note = (f"You had chosen Ignore for this SMS on {_when(row.resolved_at or row.seen_at)}; it is booked "
+                    "now because you forwarded it.")
+        elif row.status in ("asked", "review"):
+            note = "Your phone had already brought this in and it was waiting for you; it no longer waits."
+        else:
+            continue
+        guard.inbox.settle(row, "booked", message, resolved=True)
+    if note is None and waited:
+        note = "This SMS was waiting for your answer; it no longer waits."
+    return note
 
 
 def register_core_tools(guard: Guard) -> None:
@@ -712,18 +865,37 @@ def register_core_tools(guard: Guard) -> None:
             raise ToolRefusal("That does not look like a bKash, Nagad or bank SMS I can read, so nothing was recorded. "
                               "You can type the amount instead.")
         if guard.ledger.has_trx(shop, parsed.trx_id):
-            raise ToolRefusal(f"TrxID {parsed.trx_id} is already in your books, so it was not recorded twice.")
+            raise ToolRefusal(already_booked(guard, parsed.trx_id, args.purpose))
         segment = turn.segments[args.segment - 1]
+        from_chat = segment.source == "forwarded_sms" and turn.channel != "phone"
         check = guard.payments.check_sms(parsed)
         if not check.confirmed:
-            phone_rule(segment.source, check, parsed)
-        debtor = guard.ledger.debtor_for_sms(shop, parsed)
+            try:
+                phone_rule(segment.source, check, parsed)
+            except ToolRefusal as refusal:
+                if from_chat and (note := waiting_note(guard, parsed.trx_id)):
+                    raise ToolRefusal(str(refusal) + note) from None
+                raise
+        money_in = parsed.direction == "in" and parsed.txn_type != "cash_in"
+        named = None
+        if args.customer and money_in:  # the owner said who sent it: that customer, whatever the number
+            debtor = find_debtor(args.customer)
+            named = debtor.name if debtor else customer_name(args.customer)
+        else:
+            debtor = guard.ledger.debtor_for_sms(shop, parsed)
         if debtor is not None and args.purpose is None:
             question = guard.ledger.ask_about_sms(
                 shop, sms_text=turn.segments[args.segment - 1].text, sms=parsed, debtor=debtor,
-                request_id=turn.request_id, conversation_id=turn.conversation_id, decision_id=_decision.decision_id)
+                request_id=turn.request_id, conversation_id=turn.conversation_id, decision_id=_decision.decision_id,
+                product_note=product_note(args.item))
             raise ToolQuestion(*sms_question(question))
-        return book_sms(guard, parsed, purpose=args.purpose or "auto", source_ref=turn.request_id)
+        data = book_sms(guard, parsed, purpose=args.purpose or "auto", source_ref=turn.request_id,
+                        product_note=product_note(args.item), customer=named)
+        if from_chat:
+            done = f"Booked from chat as {data['recorded']}, {data['amount']}."
+            if note := settle_earlier(guard, parsed.trx_id, args.purpose or "auto", done):
+                data["earlier"] = note
+        return data
 
     gateway.register(ToolSpec(
         name="record_sms",
@@ -733,8 +905,11 @@ def register_core_tools(guard: Guard) -> None:
         args_model=SmsArgs,
         to_action=lambda a, _t: simple_action(
             "record_sms", ActionKind.LEDGER_WRITE,
-            f"Book forwarded SMS {a.segment}" + {"baki": " as baki paid back", "other": " as a sale", None: ""}[a.purpose],
-            {"segment": a.segment, **({"purpose": a.purpose} if a.purpose else {})}),
+            f"Book forwarded SMS {a.segment}" + (f" from {a.customer}" if a.customer else "")
+            + {"baki": " as baki paid back", "other": " as a sale", None: ""}[a.purpose]
+            + (f", {note}" if (note := product_note(a.item)) else ""),
+            with_product({"segment": a.segment, **({"purpose": a.purpose} if a.purpose else {}),
+                          **({"customer": a.customer} if a.customer else {})}, a.item)),
         handler=record_sms,
     ))
 
@@ -747,10 +922,10 @@ def register_core_tools(guard: Guard) -> None:
         name = args.counterparty_name
         if args.kind in ("baki_sale", "baki_repayment") and name:
             name = customer_name(name)  # "Babul" adds to (or pays off) Babul Mia's baki, not a new "Babul"
+        products = product_note(args.item)
         if args.kind == "baki_repayment":  # capped at what they owe; the rest (or all, if they owe nothing) is a sale
-            note = " ".join(x for x in (args.item, args.note) if x) or None
             data = book_customer_payment(guard, name, amount_paisa=amount, method=args.method, purpose="baki",
-                                         source_ref=turn.request_id, note=note)
+                                         source_ref=turn.request_id, note=args.note, product_note=products)
             data["category"] = "Baki collected" if data["recorded"] == "baki repayment" else "Sales"
             data["customer_now_owes"] = data["customer_still_owes"] or fmt_taka(0)
             if data["recorded"] == "sale":
@@ -761,7 +936,7 @@ def register_core_tools(guard: Guard) -> None:
             method=args.method, amount_paisa=amount,
             category=categorize(args.kind, args.item, args.note, name),
             counterparty_name=name, counterparty_number=args.counterparty_number,
-            note=" ".join(x for x in (args.item, args.note) if x) or None, source="owner_text",
+            note=args.note, product_note=products, source="owner_text",
             source_ref=turn.request_id, due_date=args.pay_back_by,
         ))
         settled, bill = [], None
@@ -777,7 +952,8 @@ def register_core_tools(guard: Guard) -> None:
                 if found is not None:
                     bill = guard.ledger.reduce_obligation(shop, found.id, amount)
         result = {"recorded": args.kind.replace("_", " "), "amount": fmt_taka(amount), "method": args.method,
-                  "category": entry.category, "today": today_summary()}
+                  "category": entry.category, **({"products": products} if products else {}),
+                  "today": today_summary()}
         if args.kind == "baki_sale":
             result["customer"] = name
             result["customer_now_owes"] = owes(name)
@@ -807,11 +983,13 @@ def register_core_tools(guard: Guard) -> None:
         if debtor is not None and args.purpose is None:  # paying off the baki, or something else? the owner says
             question = guard.ledger.ask_about_typed(
                 shop, debtor=debtor, amount_paisa=amount, method=args.method, request_id=turn.request_id,
-                conversation_id=turn.conversation_id, decision_id=decision.decision_id)
+                conversation_id=turn.conversation_id, decision_id=decision.decision_id,
+                product_note=product_note(args.item))
             raise ToolQuestion(*sms_question(question))
         name = debtor.name if debtor else customer_name(args.customer_name)
         return book_customer_payment(guard, name, amount_paisa=amount, method=args.method,
-                                     purpose=args.purpose or "other", source_ref=turn.request_id, note=args.note)
+                                     purpose=args.purpose or "other", source_ref=turn.request_id, note=args.note,
+                                     product_note=product_note(args.item))
 
     gateway.register(ToolSpec(
         name="record_customer_payment",
@@ -1073,7 +1251,8 @@ def register_core_tools(guard: Guard) -> None:
         return {"entries": [
             {"when": e.occurred_at.isoformat(), "kind": e.kind, "direction": e.direction, "method": e.method,
              "amount": fmt_taka(e.amount_paisa), "category": e.category, "who": e.counterparty_name,
-             "note": mask_text(e.note) if e.note else None}
+             "note": mask_text(e.note) if e.note else None,
+             **({"products": mask_text(e.product_note)} if e.product_note else {})}
             for e in guard.ledger.entries(shop, limit=args.limit)
         ]}
 

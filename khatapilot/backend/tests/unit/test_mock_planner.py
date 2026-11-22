@@ -49,7 +49,7 @@ def only(text: str):
     ("Jamal ke 450 taka dilam", "add_ledger_entry", {"kind": "supplier_payment", "amount_taka": "450"}),
     ("bought 2 cartons of oil from Bismillah Oil Agency 6000 on credit", "add_ledger_entry",
      {"kind": "purchase", "amount_taka": "6000", "method": "credit", "counterparty_name": "Bismillah Oil Agency"}),
-    ("paid rent 22000", "add_ledger_entry", {"kind": "expense", "amount_taka": "22000", "item": "rent"}),
+    ("paid rent 22000", "add_ledger_entry", {"kind": "expense", "amount_taka": "22000", "note": "rent"}),
     ("paid Rahim Traders 8000 bkash", "add_ledger_entry",
      {"kind": "supplier_payment", "amount_taka": "8000", "method": "bkash", "counterparty_name": "Rahim Traders"}),
     ("Jamal Uddin paid 500", "record_customer_payment", {"customer_name": "Jamal Uddin", "amount_taka": "500"}),
@@ -102,6 +102,20 @@ def test_baki_takes_an_optional_pay_back_day(text, name, amount, back):
 def test_what_forwarded_money_is_for_comes_from_the_owners_words(owner, purpose):
     from app.agent.llm.mock_provider import sms_purpose
     assert sms_purpose(owner) == purpose
+
+
+@pytest.mark.parametrize(("owner", "sender"), [
+    ("record this", None),
+    ("Jamal sent this, not for baki", "Jamal"),
+    ("Jamal Uddin gave me this for rice", "Jamal Uddin"),
+    ("Jamal er taka, baki na", "Jamal"),
+    ("money from Babul, record it", "Babul"),
+    ("he sent this for an order", None),
+    ("This is from bKash", None),
+])
+def test_who_sent_forwarded_money_comes_from_the_owners_words(owner, sender):
+    from app.agent.llm.mock_provider import sms_sender
+    assert sms_sender(owner) == sender
 
 
 def test_two_payments_in_one_sentence():

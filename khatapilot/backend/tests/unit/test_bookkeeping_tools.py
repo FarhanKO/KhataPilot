@@ -112,6 +112,85 @@ def test_when_the_owner_already_said_what_it_is_for_nothing_is_asked(world):
     assert out.status == "ok" and out.data["recorded"] == "baki repayment"
 
 
+SMS_IN_AGAIN = SMS_IN.replace("BK11AA22BB", "BK55EE66FF").replace("Tk 1,500.00", "Tk 300.00")
+
+
+def owes_without_a_number(world, amount: int = 2_000, number: str | None = None) -> None:
+    """Baki added from chat: the customer has no saved record, so no saved number (unless the entry has one)."""
+    with world.guard() as guard:
+        guard.ledger.add_entry(NewLedgerEntry(shop_id=SHOP, occurred_at=world.clock.now() - timedelta(days=4),
+                                              kind="baki_sale", direction="in", method="credit",
+                                              amount_paisa=taka(amount), category="Sales on credit (baki)",
+                                              counterparty_name="Jamal Uddin", counterparty_number=number,
+                                              source="owner_text"))
+
+
+def test_the_owner_can_say_who_sent_money_whose_number_is_not_saved(world):
+    owes_without_a_number(world)
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN, owner="Jamal sent this"), segment=2, customer="Jamal")
+    assert out.status == "asked" and "came in from Jamal Uddin, who owes ৳2,000 of baki" in out.message
+    _view, data, message = answer(world, out.data["question_id"], "other")
+    assert data["recorded"] == "sale" and "baki of ৳2,000 is unchanged" in message
+    assert "number 017XXXX7788 is saved" in message and owed(world) == taka(2_000)
+    # The next SMS from that number is known to be Jamal's without being told
+    world.provider_saw(SMS_IN_AGAIN)
+    again = world.submit("record_sms", forwarded(SMS_IN_AGAIN), segment=2)
+    assert again.status == "asked" and "৳300 came in from Jamal Uddin" in again.message
+
+
+def test_money_the_owner_says_is_for_something_else_leaves_the_baki_alone(world):
+    owes_without_a_number(world)
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN, owner="Jamal sent this, not for baki"), segment=2,
+                       customer="Jamal", purpose="other")
+    assert out.status == "ok" and out.data["recorded"] == "sale" and out.data["counterparty"] == "Jamal Uddin"
+    assert out.data["baki_unchanged"] == "৳2,000" and owed(world) == taka(2_000)
+
+
+def test_money_the_owner_says_pays_the_baki_comes_off_it(world):
+    owes_without_a_number(world)
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN, owner="Jamal paid back his baki"), segment=2,
+                       customer="Jamal", purpose="baki")
+    assert out.status == "ok" and out.data["recorded"] == "baki repayment"
+    assert out.data["customer_still_owes"] == "৳500" and owed(world) == taka(500)
+
+
+def test_the_sender_must_be_named_by_the_owner_not_the_model(world):
+    owes_without_a_number(world)
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN), segment=2, customer="Jamal", purpose="baki")
+    assert out.status == "blocked" and "did not name" in out.message
+    assert owed(world) == taka(2_000)
+
+
+def test_a_debtor_is_matched_by_the_number_on_their_baki(world):
+    owes_without_a_number(world, number="01755667788")
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN), segment=2)
+    assert out.status == "asked" and "came in from Jamal Uddin" in out.message
+
+
+def test_without_a_name_or_a_number_unknown_money_is_a_sale_and_no_baki_changes(world):
+    owes_without_a_number(world)
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN), segment=2)
+    assert out.status == "ok" and out.data["recorded"] == "sale" and owed(world) == taka(2_000)
+
+
+def test_naming_the_sender_never_takes_another_customers_number(world):
+    kamal_owes(world)  # Kamal Hossain's saved number is the SMS's number
+    owes_without_a_number(world)
+    world.provider_saw(SMS_IN)
+    out = world.submit("record_sms", forwarded(SMS_IN, owner="Jamal sent this, for baki"), segment=2,
+                       customer="Jamal", purpose="baki")
+    assert out.status == "ok" and out.data["counterparty"] == "Jamal Uddin" and "number_saved" not in out.data
+    assert owed(world) == taka(500) and kamal(world).outstanding_paisa == taka(2_000)
+    with world.guard() as guard:
+        assert guard.shops.find_party_by_number(SHOP, "01755667788", kind="customer").name == "Kamal Hossain"
+
+
 def test_a_payment_sms_to_a_supplier_settles_their_bill(world):
     world.provider_saw(SMS_OUT)
     out = world.submit("record_sms", forwarded(SMS_OUT), segment=2)

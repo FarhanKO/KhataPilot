@@ -90,7 +90,7 @@ flowchart TB
 | Module | Responsibility | Tier of its actions |
 |---|---|---|
 | `shop` | shop profile, parties (suppliers and customers) | 0 |
-| `ledger` | parse bKash/Nagad SMS, typed text and invoice text into entries; categories; daily totals | 0 |
+| `ledger` | parse bKash/Nagad SMS, typed text and invoice text into entries, each with an optional product note in the owner's words; categories; daily totals | 0 |
 | `payments` | payment records, schedules, execution against the sandbox (requires an `AuthorizedAction`) | 2 or 3 |
 | `reminders` | baki reminders to customers, written from the books and a fixed template that says how to stop them; sending (requires an `AuthorizedAction`, one per message); who paid since; customers who replied STOP (only they can undo it) or whom the owner stopped, left out when reminders are prepared, approved and sent | 1 |
 | `forecast` | 14-day cash projection from explainable parts (weekday baselines, Ramadan/Eid, known bills, supplier cycles, baki flow) with an 80% band, the first shortfall day and its cause, and suggestions re-simulated to show their effect | 0 |

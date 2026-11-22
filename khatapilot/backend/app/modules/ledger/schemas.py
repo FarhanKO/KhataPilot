@@ -40,6 +40,7 @@ class NewLedgerEntry(BaseModel):
     counterparty_name: str | None = None
     counterparty_number: str | None = None
     note: str | None = None
+    product_note: str | None = Field(default=None, max_length=160)  # what was sold or bought, if the owner said
     due_date: date | None = None
     days_late: int | None = None
     trx_id: str | None = None
@@ -61,8 +62,10 @@ class LedgerEntryView(BaseModel):
     counterparty_name: str | None
     counterparty_number: str | None
     note: str | None
+    product_note: str | None = None
     trx_id: str | None
     source: str
+    created_at: datetime | None = None
 
 
 class DayTotals(BaseModel):
