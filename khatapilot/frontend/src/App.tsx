@@ -2,7 +2,7 @@ import { Bell, ClipboardCheck, Moon, OctagonX, Sun } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { priorityTone, useAlerts } from "./alerts";
-import { api, errorText } from "./api";
+import { api, ApiError, errorText } from "./api";
 import { AlertsDialog } from "./components/AlertsDialog";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { LogoMark } from "./components/Logo";
@@ -51,6 +51,23 @@ function tabFromHash(): TabId {
 
 let messageSeq = 0;
 const nextId = () => `m${++messageSeq}`;
+
+/** When a chat message gets no answer (no network, the server or the AI service down, a timeout), the
+ *  assistant says so calmly in the conversation instead of a red error box. A request the server refused
+ *  (a 4xx) still says why, in the same calm bubble. */
+function unreachableReply(e: unknown): ChatMessage {
+  const offline = !(e instanceof ApiError) || e.status >= 500;
+  return {
+    id: nextId(),
+    role: "assistant",
+    text: offline
+      ? "The AI model is offline right now, so I can't get your data. Nothing was changed. Please try again in a little while."
+      : errorText(e),
+    route: offline ? "offline" : undefined,
+    routeReason: offline ? errorText(e) : undefined,
+    at: new Date().toISOString(),
+  };
+}
 
 function newConversationId(): string {
   return `web-${Date.now().toString(36)}`;
@@ -190,7 +207,7 @@ export default function App() {
         refresh();
         return response;
       } catch (e) {
-        setMessages((m) => [...m, { id: nextId(), role: "system", text: errorText(e), at: new Date().toISOString() }]);
+        setMessages((m) => [...m, unreachableReply(e)]);
         return null;
       } finally {
         setSending(false);
@@ -221,7 +238,7 @@ export default function App() {
         ]);
         refresh();
       } catch (e) {
-        setMessages((m) => [...m, { id: nextId(), role: "system", text: errorText(e), at: new Date().toISOString() }]);
+        setMessages((m) => [...m, unreachableReply(e)]);
       } finally {
         setSending(false);
       }

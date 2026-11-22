@@ -124,3 +124,10 @@ def set_savings_account(body: SavingsAccountRequest, container=Depends(get_conta
 def block(body: BlockRequest, container=Depends(get_container), _owner: Sender = Depends(require_owner)):
     with controls(container) as (_, owner):
         return owner.block_number(body.number, body.reason, request_id=new_id("req"))
+
+
+@router.post("/erase-data", response_model=ControlResult)
+def erase_data(body: PinRequest, container=Depends(get_container), _owner: Sender = Depends(require_owner)):
+    """Delete all the shop's data, with the owner's PIN (the Delete button under Export in the Credit tab)."""
+    with controls(container) as (guard, owner):
+        return owner.erase_data(body.pin, session=guard.session, shop_id=guard.shop_id, request_id=new_id("req"))

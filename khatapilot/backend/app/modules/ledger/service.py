@@ -487,6 +487,16 @@ class LedgerService:
         ).all()
         return [(day, amount) for day, amount in rows]
 
+    def purchases_from(self, shop_id: str, name: str, *, since: date, limit: int = 20) -> list[int]:
+        """The latest stock purchases booked from this supplier since `since`, newest first (amounts)."""
+        rows = self.session.scalars(
+            select(LedgerEntry.amount_paisa)
+            .where(LedgerEntry.shop_id == shop_id, LedgerEntry.kind == "purchase", LedgerEntry.local_date >= since,
+                   func.lower(LedgerEntry.counterparty_name) == name.lower())
+            .order_by(LedgerEntry.occurred_at.desc()).limit(limit)
+        ).all()
+        return [int(a) for a in rows]
+
     def repaid_since(self, shop_id: str, *, name: str, number: str | None, since: datetime) -> int:
         """Baki this customer paid back from `since` on, matched by name or by number."""
         who = func.lower(LedgerEntry.counterparty_name) == name.lower()

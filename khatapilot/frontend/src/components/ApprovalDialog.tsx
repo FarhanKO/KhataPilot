@@ -153,9 +153,45 @@ function Details({ item, onRemove, removing }: { item: Pending; onRemove: (name:
 
 const METHOD_NAMES: Record<string, string> = { bkash: "bKash", nagad: "Nagad", bank: "Bank account" };
 
+/** "Delete all my data", asked for in chat: exactly what goes and what stays, before the PIN. */
+function EraseData({ item }: { item: Pending }) {
+  const p = (item.action.params ?? {}) as { items?: { what: string; count: number }[]; scheduled_payments?: number; kept?: string };
+  const items = p.items ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-bad/35 bg-bad-soft/50 p-4">
+        <div className="label text-[10.5px] text-bad">This will be deleted</div>
+        {items.length ? (
+          <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+            {items.map((i) => (
+              <li key={i.what} className="flex justify-between gap-3">
+                <span>{i.what}</span>
+                <span className="tabular font-medium">{i.count.toLocaleString("en-IN")}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm">Nothing: the books are already empty.</p>
+        )}
+        {!!p.scheduled_payments && (
+          <p className="mt-2 text-sm font-medium text-bad">
+            {p.scheduled_payments} scheduled payment{p.scheduled_payments !== 1 ? "s" : ""} will be cancelled.
+          </p>
+        )}
+      </div>
+      {p.kept && <Note tone="neutral" title="What stays">{p.kept}</Note>}
+      <Note tone="warn" title="Asked for in chat">
+        Nothing is deleted until you confirm with your PIN here. To keep a copy first, reject this and say "export my
+        data".
+      </Note>
+    </div>
+  );
+}
+
 /** A change to the owner's own safety settings, asked for in chat. */
 function SettingsChange({ item }: { item: Pending }) {
   const p = (item.action.params ?? {}) as Record<string, string | number | null>;
+  if (p.control === "erase_data") return <EraseData item={item} />;
   const money = (v: unknown) => (typeof v === "number" ? taka(v) : "unchanged");
   const caption =
     p.control === "limits" ? "Change your payment limits"
@@ -288,8 +324,10 @@ export function ApprovalDialog({ open, focusId, pending, onClose, onDone }: {
         ? "Send this application?"
         : item.kind === "message.send"
           ? "Send these reminders?"
-          : item.kind === "control.change" || item.kind === "control.block"
-            ? "Change this setting?"
+          : item.action.params?.control === "erase_data"
+            ? "Delete all your data?"
+            : item.kind === "control.change" || item.kind === "control.block"
+              ? "Change this setting?"
             : "Approve this action?";
 
   return (

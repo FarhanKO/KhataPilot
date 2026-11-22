@@ -182,6 +182,12 @@ Three independent places check it:
 
 "stop" in chat (matched by the interface layer before the LLM is called) or the STOP button sets a global freeze. The guard blocks every tier 1–3 action, scheduled payments are paused (not deleted), and the backend tells the sandbox to freeze the shop's accounts so the provider refuses payments too. Turning it off needs the owner's PIN.
 
+**The safety breaker** (`guard/breaker.py`) pulls the same switch by itself. After every blocked decision the gateway asks it to count the blocked attempts to move money, message someone, apply for a loan or change a safety setting in the last 15 minutes (from the audit log, and only since the last STOP or resume); at 3 it turns STOP on with the reason and an urgent alert. Blocked reads never count. `SAFETY_BREAKER_BLOCKS` and `SAFETY_BREAKER_MINUTES` set it; 0 turns it off.
+
+### 4.6b The owner's data and supplier invoices
+
+Four guard tools (`guard/data_tools.py`) serve the owner's paperwork from chat. `make_report` makes the monthly report (the owner's, or the six-month one for a bank) that the app shows as a card to open or save as a PDF; `export_my_data` offers the data file; both only read. `erase_my_data` is a `CONTROL_CHANGE`, so it is always held for the PIN, and the `owner_settings` check refuses it unless the owner's own message asks for a deletion; once approved, `guard/data_rights.py` deletes every table of shop data it lists and keeps the ones it lists as kept (a test fails when a new shop table is in neither list). The Credit tab's Delete button reaches the same function through the PIN-protected `POST /api/owner/erase-data`. `check_invoice` reads a forwarded invoice with a deterministic parser (`core/invoice.py`) and compares it with the books (`guard/invoice_check.py`), remembering each invoice in the guard's own `guard_invoice_checks` table to spot it a second time; a verdict of check or stop is also an alert.
+
 ### 4.7 The audit log
 
 The audit log is a separate SQLite file with its own connection. It is append-only (SQLite triggers abort any `UPDATE` or `DELETE`) and hash-chained: each entry stores the hash of the previous entry, and its own hash covers every field. `verify` walks the chain and reports the first broken link. Each entry records the timestamp, request id, channel, provenance, a masked summary of the request, the proposed action, tier, every check with its result and detail, the final decision, the reason in plain English and the sandbox transaction id. PINs are never logged and phone numbers are masked (`017XXXX1234`).

@@ -105,3 +105,18 @@ class PendingAction(Base):
     expires_at: Mapped[datetime]
     resolved_at: Mapped[datetime | None] = mapped_column(default=None)
 
+
+
+class InvoiceCheckRecord(Base):
+    """An invoice the owner forwarded and the guard checked, remembered to spot the same invoice twice."""
+
+    __tablename__ = "guard_invoice_checks"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    shop_id: Mapped[str] = mapped_column(String(64), index=True)
+    text_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    supplier: Mapped[str] = mapped_column(String(128))
+    invoice_number: Mapped[str] = mapped_column(String(40), default="")
+    total_paisa: Mapped[int | None] = mapped_column(default=None)
+    verdict: Mapped[str] = mapped_column(String(12))  # ok | check | stop
+    checked_at: Mapped[datetime]

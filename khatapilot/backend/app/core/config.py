@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     token_ttl_seconds: int = 300
     intent_ttl_minutes: int = 30
     agent_max_steps: int = 6
+    # The safety breaker: this many blocked attempts to move money, message someone, apply for a loan or
+    # change a safety setting within this many minutes turn STOP on by themselves (0 turns it off).
+    safety_breaker_blocks: int = 3
+    safety_breaker_minutes: int = 15
 
     @field_validator("data_dir", "risk_model_path", "credit_model_path", "backup_dir", "stt_model_dir")
     @classmethod

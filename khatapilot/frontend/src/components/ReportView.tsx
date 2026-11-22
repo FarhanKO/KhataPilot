@@ -361,7 +361,13 @@ function LenderSheet({ r }: { r: LenderReport }) {
 }
 
 /** The report as a printable page over the app: Print opens the browser's print dialog (or "Save as PDF"). */
-export function ReportView({ report, onClose }: { report: MonthlyReport; onClose: () => void }) {
+export function ReportView({ report, onClose, autoPrint = false }: { report: MonthlyReport; onClose: () => void; autoPrint?: boolean }) {
+  // "Save as PDF" from a chat card: open the print dialog once the page has drawn.
+  useEffect(() => {
+    if (!autoPrint) return;
+    const timer = window.setTimeout(() => window.print(), 400);
+    return () => window.clearTimeout(timer);
+  }, [autoPrint]);
   useEffect(() => {
     const before = document.title;
     document.title = `${report.shop.name} - ${report.title}`; // the PDF's default file name

@@ -18,6 +18,7 @@ from app.core.clock import Clock
 from app.core.masking import mask_number, normalize_msisdn
 from app.core.money import to_paisa
 from app.guard import control_changes as changes
+from app.guard import data_rights
 from app.guard.killswitch import KillSwitchResult, KillSwitchService
 from app.guard.pin import PinManager, PinPolicyError
 from app.guard.policy_store import PolicyStore, normalize_number
@@ -118,3 +119,14 @@ class OwnerControls:
     def resume(self, pin: str | None, *, request_id: str, channel: str = "web") -> KillSwitchResult:
         return self.kill_switch.deactivate(pin=pin, actor="owner", channel=channel, request_id=request_id)
 
+    def erase_data(self, pin: str | None, *, session, shop_id: str, request_id: str,
+                   channel: str = "web") -> ControlResult:
+        """Delete all the shop's data (see `data_rights.py` for what goes and what stays). Always the PIN."""
+        if refused := self._pin_ok(pin, request_id, channel, "delete all the shop's data"):
+            return refused
+        done = data_rights.erase(session, shop_id)
+        message = (f"Deleted {done.total:,} records: {', '.join(done.lines()) or 'nothing was left'}. "
+                   f"{data_rights.KEPT_WORDS}")
+        self._audit(request_id, channel, "All the shop's data deleted", "ERASED", message,
+                    action={"control": "erase_data", **done.view()})
+        return ControlResult(ok=True, message=message, data=done.view())

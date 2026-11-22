@@ -19,6 +19,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from app.agent import faq
 from app.agent.llm.types import HistoryMessage, LLMStep, LLMTool, LLMToolCall, ToolResult, TurnBrief
 from app.core.masking import PHONE_RE, find_phone_numbers, mask_phone
 from app.core.money import AMOUNT_RE, fmt_taka, normalize_digits, parse_amount
@@ -667,12 +668,62 @@ def plan_savings(t: str) -> list[LLMToolCall] | None:
     return [call("get_savings")]
 
 
+# Reports to save as a PDF, a copy of all the data, deleting all of it (English, Banglish, Bangla)
+REPORT_WORDS = re.compile(r"\b(?:reports?|statements?|pdf|hisab\s*(?:er|ar)?\s*(?:pdf|kagoj|copy|report)|"
+                          r"masik\s+hisab)\b|রিপোর্ট|পিডিএফ|স্টেটমেন্ট|হিসাবের\s*কাগজ", re.I)
+LENDER_WORDS = re.compile(r"\b(?:bank|banks|lender|ngo|loan|loans|microfinance|mfi|rin)\b|ব্যাংক|লোন|ঋণ|এনজিও",
+                          re.I)
+DATA_NOUN = re.compile(r"\b(?:data|everything|all\s+(?:my\s+)?(?:records|information|info|books)|my\s+(?:records|"
+                       r"information|info|books)|sob\s+(?:kichu|tottho|hisab)|tottho)\b|তথ্য|ডাটা|ডেটা|সব\s*কিছু|"
+                       r"সব\s*হিসাব|রেকর্ড", re.I)
+EXPORT_VERB = re.compile(r"\b(?:export|download|backup|back\s+up|copy\s+of)\b|ডাউনলোড|এক্সপোর্ট|কপি", re.I)
+ERASE_VERB = re.compile(r"\b(?:delete|erase|wipe|destroy|clear)\b|\b(?:muche|muchhe|mucha)\s*(?:dao|felo|den)\b|"
+                        r"\bdelete\s*(?:koro|kore\s*dao)\b|মুছ|ডিলিট", re.I)
+BN_MONTHS = {"জানুয়ারি": 1, "ফেব্রুয়ারি": 2, "মার্চ": 3, "এপ্রিল": 4, "মে": 5, "জুন": 6, "জুলাই": 7, "আগস্ট": 8,
+             "সেপ্টেম্বর": 9, "অক্টোবর": 10, "নভেম্বর": 11, "ডিসেম্বর": 12}
+
+
+def report_month(low: str, today: date) -> str | None:
+    """The month the owner named for a report ("September", "last month", "সেপ্টেম্বর"), as YYYY-MM."""
+    if re.search(r"\b(?:last|previous|ager|gato|goto)\s+(?:month|mash|mas)\b|গত\s*মাস", low):
+        first = today.replace(day=1) - timedelta(days=1)
+        return f"{first:%Y-%m}"
+    if re.search(r"\b(?:this|ei)\s+(?:month|mash|mas)\b|এই\s*মাস", low):
+        return f"{today:%Y-%m}"
+    month = None
+    if m := re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", low):
+        month = MONTH_NUMBERS[m.group(1)]
+    else:
+        month = next((n for name, n in BN_MONTHS.items() if name in low), None)
+    if month is None:
+        return None
+    year = today.year if month <= today.month else today.year - 1
+    return f"{year}-{month:02d}"
+
+
+def plan_data(t: str, today: date) -> list[LLMToolCall] | None:
+    low = t.lower()
+    if ERASE_VERB.search(t) and DATA_NOUN.search(t):
+        return [call("erase_my_data")]
+    if EXPORT_VERB.search(t) and DATA_NOUN.search(t) and not REPORT_WORDS.search(t):
+        return [call("export_my_data")]
+    if REPORT_WORDS.search(t) and not re.search(r"\b(?:apply|application|abedon)\b", low):
+        kind = "lender" if LENDER_WORDS.search(t) else "owner"
+        month = report_month(low, today)
+        return [call("make_report", kind=kind, **({"month": month} if month else {}))]
+    return None
+
+
 def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
     t = normalize_digits(text).strip()
     low = t.lower()
     amounts = amounts_in(t)
     numbers = find_phone_numbers(t)
     calls: list[LLMToolCall] = []
+
+    # Reports, export and delete-all (first: "a report for the bank" is not a loan, "delete all" not a bill)
+    if (data_calls := plan_data(t, today)) is not None:
+        return data_calls
 
     # Credit profile and loans (checked first: "a loan to pay Meghna" is a loan question, not a payment)
     if re.search(r"\b(credit (?:score|profile|rating)|score koto|creditworth\w*)\b", low) and \
@@ -874,11 +925,15 @@ def plan(brief: TurnBrief) -> list[LLMToolCall]:
         calls.append(call("notify_owner", message=f"A message from {brief.sender_display} {asked}. "
                                                   "KhataPilot did not act on it."))
         return calls
+    if all(s.kind == "owner_text" for s in brief.segments) and faq.match(brief.owner_text):
+        return []  # a question about KhataPilot itself: compose() answers it from the fixed text
     # The owner's product note goes with a forwarded SMS only when there is one SMS it can be about.
     single_sms = sum(s.kind == "mobile_money_sms" for s in brief.segments) == 1
     for segment in brief.segments:
         if segment.kind == "owner_text":
             continue
+        if segment.source == "invoice_text":
+            calls.append(call("check_invoice", segment=segment.index))
         if segment.kind == "mobile_money_sms":
             calls.append(call("record_sms", segment=segment.index, purpose=sms_purpose(brief.owner_text),
                               item=products_in(brief.owner_text) if single_sms else None,
@@ -968,8 +1023,67 @@ def payment_question(text: str) -> str | None:
 
 # ---------------------------------------------------------------- replies
 
+def describe_data(tool: str, outcome) -> str | None:
+    """Replies for reports, the export, delete-all and the invoice check; None for any other tool."""
+    data = outcome.data if isinstance(outcome.data, dict) else {}
+    if tool == "erase_my_data" and outcome.status == "held":
+        return ("Waiting for you: deleting all your shop's data. Check what will go in the pop-up and confirm with "
+                "your PIN if you are sure. It cannot be undone; your profile, PIN, safety settings and the audit log "
+                "stay. If you want a copy first, say \"export my data\".")
+    if outcome.status != "ok":
+        return None
+    if tool == "make_report":
+        r = data.get("report", {})
+        what = "Your report for a bank or NGO" if r.get("kind") == "lender" else "Your monthly report"
+        return (f"{what} is ready below: {r.get('title')}. {r.get('headline', '')} Tap Open to read it, "
+                "or Save as PDF to keep it. Nothing was sent to anyone.").replace("  ", " ")
+    if tool == "export_my_data":
+        items = ", ".join(f"{i['count']:,} {i['what']}" for i in data.get("export", {}).get("what", [])[:5])
+        return (f"Your data is ready to download below: {items or 'your shop profile'}, as one file with phone "
+                "numbers masked. It stays on your device; nothing was sent anywhere.")
+    if tool == "check_invoice":
+        found = [f["text"] for f in data.get("findings", []) if f["level"] != "note"]
+        notes = [f["text"] for f in data.get("findings", []) if f["level"] == "note"]
+        text = f"{data.get('headline', 'Invoice checked')}."
+        if found:
+            text += " " + " ".join(found)
+        elif notes:
+            text += " " + " ".join(notes)
+        if data.get("verdict") in ("check", "stop"):
+            text += " I put a safeguard alert in Alerts."
+        return text + " Nothing was paid."
+    return None
+
+
+def describe_bn(tool: str, outcome) -> str | None:
+    """Bangla replies for the same tools, when the owner wrote in Bangla script."""
+    data = outcome.data if isinstance(outcome.data, dict) else {}
+    if tool == "erase_my_data" and outcome.status == "held":
+        return ("আপনার অপেক্ষায়: দোকানের সব তথ্য মুছে ফেলা। কী কী মুছবে তা পপ-আপে দেখে নিশ্চিত হলে পিন দিয়ে "
+                "নিশ্চিত করুন। এটা ফেরানো যায় না; আপনার প্রোফাইল, পিন, নিরাপত্তা সেটিংস আর অডিট লগ থেকে যাবে। আগে একটি "
+                "কপি চাইলে লিখুন \"আমার সব তথ্য ডাউনলোড\"।")
+    if outcome.status != "ok":
+        return None
+    if tool == "make_report":
+        r = data.get("report", {})
+        who = "ব্যাংক বা এনজিওকে দেওয়ার জন্য" if r.get("kind") == "lender" else "আপনার জন্য"
+        return (f"{who} রিপোর্ট নিচে তৈরি ({r.get('period', '')})। Open চাপলে পড়তে পারবেন, Save as PDF চাপলে "
+                "PDF হিসেবে রাখতে পারবেন। কাউকে কিছু পাঠানো হয়নি।")
+    if tool == "export_my_data":
+        return "আপনার সব তথ্য নিচে ডাউনলোডের জন্য তৈরি, একটি ফাইলে, ফোন নম্বর ঢাকা অবস্থায়। কোথাও কিছু পাঠানো হয়নি।"
+    if tool == "check_invoice":
+        verdict = data.get("verdict")
+        head = ("এই ইনভয়েসে এখনই টাকা দেবেন না।" if verdict == "stop" else "টাকা দেওয়ার আগে ইনভয়েসটি আবার দেখুন।"
+                if verdict == "check" else "ইনভয়েসটি আপনার হিসাবের সাথে মিলছে।")
+        reasons = " ".join(f["text"] for f in data.get("findings", []) if f["level"] != "note")
+        return f"{head} {reasons} কোনো টাকা দেওয়া হয়নি।".replace("  ", " ")
+    return None
+
+
 def describe(tool: str, outcome) -> str:
     data = outcome.data if isinstance(outcome.data, dict) else {}
+    if (text := describe_data(tool, outcome)) is not None:
+        return text
     if outcome.status == "blocked":
         return f"I did not do that. {outcome.message}"
     if outcome.status == "error" and "already in your books" in outcome.message:
@@ -1243,19 +1357,25 @@ def describe_bills(tool: str, data: dict) -> str:
     return f"{len(data['bills'])} open bills, {data['total_due']} in all: {lines}."
 
 
+HELP_REPLY = ("I can record sales, purchases and bKash/Nagad SMS, show today's totals and balances, list who owes "
+              "you, warn you before cash runs short, pay suppliers within your limits, and find you a loan. "
+              "For example: \"sold 3 bags of rice ৳1,500 cash\".")
+
+
 def compose(brief: TurnBrief, calls: list[LLMToolCall], results: list[ToolResult]) -> str:
     if not calls:
+        if brief.sender == "owner" and (fixed := faq.answer(brief.owner_text)):
+            return fixed
         if brief.sender == "owner" and (question := bill_question(brief.owner_text, brief.today)
                                         or baki_change_question(brief.owner_text)
                                         or balance_correction_question(brief.owner_text)
                                         or payment_question(brief.owner_text)):
             return question
-        return ("I can record sales, purchases and bKash/Nagad SMS, show today's totals and balances, list who owes "
-                "you, warn you before cash runs short, pay suppliers within your limits, and find you a loan. "
-                "For example: "
-                "\"sold 3 bags of rice ৳1,500 cash\".")
+        return HELP_REPLY
     by_id = {r.call_id: r.outcome for r in results}
-    parts = list(dict.fromkeys(describe(c.name, by_id[c.id]) for c in calls if c.id in by_id))
+    bangla = bool(faq.BANGLA.search(brief.owner_text or ""))
+    parts = list(dict.fromkeys((describe_bn(c.name, by_id[c.id]) if bangla else None) or describe(c.name, by_id[c.id])
+                               for c in calls if c.id in by_id))
     ledger_today = next((by_id[c.id].data.get("today") for c in reversed(calls)
                          if c.name in ("record_sms", "add_ledger_entry", "record_customer_payment") and c.id in by_id
                          and by_id[c.id].status == "ok" and isinstance(by_id[c.id].data, dict)), None)

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agent.llm.mock_provider import HELP_REPLY
 from app.agent.llm.schema import clean_schema
 from app.agent.llm.types import (
     HistoryMessage,
@@ -30,6 +31,11 @@ from app.guard.api import ToolCall, ToolOutcome, ToolPort
 
 REFUSAL_REPLY = ("I can't help with that one, so I didn't do anything. If it's about the shop's money or "
                  "books, try asking in a different way.")
+OFFLINE_REPLY = ("The AI model is offline right now, so I can't get your data for that request. Nothing was "
+                 "changed. Simple requests still work offline, like \"today's sales\", \"who owes me?\", \"will I run "
+                 "short of cash?\" or \"sold 3 bags of rice ৳1,500 cash\". Try again in a little while for the rest.")
+CAPPED_REPLY = ("This month's AI budget is used up, so I can only use the offline rules, and they didn't understand "
+                "that. Nothing was changed. Simple requests still work, like \"today's sales\" or \"who owes me?\".")
 
 EventSink = Callable[[dict[str, Any]], None]
 
@@ -144,7 +150,12 @@ class Orchestrator:
                     session.user(rendered, brief)
                     step = 0
                     continue
-                reply.text = f"{error} Nothing was changed."
+                # A network or service hiccup gets a calm reply; the technical reason goes to the trace.
+                # A setup mistake (a bad key or model name) is said as it is: only the owner can fix it.
+                calm = error.transient and not reply.outcomes  # after a tool ran, say exactly what stopped
+                reply.text = OFFLINE_REPLY if calm else f"{error} Nothing was changed."
+                if calm:
+                    reply.route, reply.route_reason = "offline", str(error)
                 emit({"type": "llm_error", "request_id": turn.request_id, "message": str(error)})
                 return reply
             reply.model = result.model
@@ -156,6 +167,9 @@ class Orchestrator:
                 return reply
             if not result.tool_calls:
                 reply.text = result.text or "Done."
+                if reply.route in ("offline", "capped") and not reply.outcomes and reply.text == HELP_REPLY:
+                    # the offline rules stood in and did not understand: say so plainly, not a generic help text
+                    reply.text = OFFLINE_REPLY if reply.route == "offline" else CAPPED_REPLY
                 return reply
             results = []
             for proposed in result.tool_calls:

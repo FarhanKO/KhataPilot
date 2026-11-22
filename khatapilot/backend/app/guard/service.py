@@ -17,6 +17,7 @@ from app.core.clock import Clock
 from app.core.config import Settings
 from app.core.money import to_paisa
 from app.guard.approvals import ApprovalService
+from app.guard.breaker import SafetyBreaker
 from app.guard.capability import CapabilitySigner
 from app.guard.engine import PolicyEngine
 from app.core.provenance import TurnContext
@@ -31,6 +32,7 @@ from app.guard.recorder import Recorder
 from app.guard.rechecks import HeldActionRechecks
 from app.guard.scheduler import PaymentScheduler
 from app.guard.control_tools import apply_control, register_control_tools
+from app.guard.data_tools import register_data_tools
 from app.guard.tools import register_core_tools
 from app.infra.audit_log import AuditLog
 from app.infra.db import Database
@@ -124,10 +126,14 @@ class Guard:
                                              signer=deps.signer, recorder=self.recorder)
         self.scheduler = PaymentScheduler(clock=clock, store=self.store, payments=self.payments,
                                           executor=self.executor, recorder=self.recorder)
+        self.breaker = SafetyBreaker(clock=clock, audit=deps.audit, kill_switch=self.kill_switch,
+                                     recorder=self.recorder, blocks=settings.safety_breaker_blocks,
+                                     minutes=settings.safety_breaker_minutes)
         self.gateway = ToolGateway(engine=self.engine, approvals=self.approvals, executor=self.executor,
-                                   recorder=self.recorder)
+                                   recorder=self.recorder, breaker=self.breaker)
         register_core_tools(self)
         register_control_tools(self)
+        register_data_tools(self)
 
 
 class GuardPort:

@@ -78,7 +78,7 @@ flowchart TB
 
 ### 3.2 The agent
 
-The agent loop (`agent/orchestrator.py`) is manual and bounded at 6 model calls per message. Each turn is rendered with the owner's words and any untrusted blocks fenced as data, the model proposes tool calls, each call goes to the guard as its own database transaction (decided, executed, audited and committed before the model hears back), and the results return to the model as data. 43 tools cover the tasks: the books (`add_ledger_entry`, `record_sms`, `record_customer_payment`, `change_baki`, `correct_balance`, `get_today_summary`, `get_balances`, `list_debtors`, `list_recent_entries`, `summarize_activity`), bills (`add_bill`, `update_bill`, `delete_bill`, `list_bills`), payments (`propose_payment`, `list_trusted_payees`), cash (`forecast_cash`, `get_safety_buffer`, `set_safety_buffer`), baki reminders (`send_reminders`, `list_reminders`, `set_reminder_opt_out`), savings and growth (`get_savings`, `set_savings_share`, `save_to_savings`, `set_savings_goal`, `remove_savings_goal`, `add_starter_goals`, `savings_products`, `get_growth_plan`, `set_reinvest_share`, `get_advice`), credit and loans (`build_credit_profile`, `match_loans`, `prefill_application`), the owner's settings as held proposals (`get_limits`, `set_limits`, `add_trusted_payee`, `remove_trusted_payee`, `set_savings_account`, `list_blocked_numbers`, `block_number`) and `notify_owner`. A limit, payee or savings-account change always waits for the PIN in the app. The PIN itself, resuming after STOP and credit consent are deliberately not tools.
+The agent loop (`agent/orchestrator.py`) is manual and bounded at 6 model calls per message. Each turn is rendered with the owner's words and any untrusted blocks fenced as data, the model proposes tool calls, each call goes to the guard as its own database transaction (decided, executed, audited and committed before the model hears back), and the results return to the model as data. 47 tools cover the tasks: the books (`add_ledger_entry`, `record_sms`, `record_customer_payment`, `change_baki`, `correct_balance`, `get_today_summary`, `get_balances`, `list_debtors`, `list_recent_entries`, `summarize_activity`), bills (`add_bill`, `update_bill`, `delete_bill`, `list_bills`), payments (`propose_payment`, `list_trusted_payees`), cash (`forecast_cash`, `get_safety_buffer`, `set_safety_buffer`), baki reminders (`send_reminders`, `list_reminders`, `set_reminder_opt_out`), savings and growth (`get_savings`, `set_savings_share`, `save_to_savings`, `set_savings_goal`, `remove_savings_goal`, `add_starter_goals`, `savings_products`, `get_growth_plan`, `set_reinvest_share`, `get_advice`), credit and loans (`build_credit_profile`, `match_loans`, `prefill_application`), the owner's settings as held proposals (`get_limits`, `set_limits`, `add_trusted_payee`, `remove_trusted_payee`, `set_savings_account`, `list_blocked_numbers`, `block_number`), the owner's data and paperwork (`make_report`, `export_my_data`, `erase_my_data`, `check_invoice`) and `notify_owner`. A limit, payee or savings-account change, and deleting the shop's data, always wait for the PIN in the app. The PIN itself, resuming after STOP and credit consent are deliberately not tools.
 
 **Three provider modes** sit behind one interface (`agent/llm/`):
 
@@ -87,6 +87,8 @@ The agent loop (`agent/orchestrator.py`) is manual and bounded at 6 model calls 
 - `mock`: a deterministic rule-based planner that is **deliberately gullible**. It proposes any money instruction it finds in forwarded content or a stranger's message, so every mock-mode test and red-team run is a worst-case test of the guard. CI runs everything in this mode with no key and no network.
 
 The model's reply language follows the owner's latest message (English, Banglish or Bangla script); money is written as `৳12,500`.
+
+**Fixed answers and offline replies.** Questions about KhataPilot itself ("is this safe?", "is this my real bank?", "which AI are you?", "what if the AI is hacked?", "where is my data?", "why is STOP on?", and others, in English, Banglish and Bangla script) are answered from fixed text before any model is called (`agent/faq.py`, routed by `agent/routing.py`): the same answer every time, at no cost, offline too. A message with an amount or a phone number in it is a request, never a fixed answer, and anything unfamiliar goes to the model, whose system prompt carries the same facts. When the model cannot be reached and the offline rules do not understand a message, the reply says plainly that the AI is offline and nothing was changed, and lists what still works; the app shows the same calm reply, not an error box, when the server itself cannot be reached.
 
 ### 3.3 The guard
 
@@ -110,6 +112,10 @@ The tier is the action's base tier raised by every escalation; any block wins (`
 **Intent matching** is exact: payee, amount to the paisa and date must match an unused intent extracted from the owner's own text in this conversation, and each intent authorizes one payment. This is what makes amount tampering, extra payments and "pay on Friday" executed now impossible, even for a model that has been fully compromised.
 
 **Capability tokens.** When an action is allowed, now or after approval, `guard/capability.py` mints an `AuthorizedAction`: the kind, a SHA-256 of the canonical JSON of exactly the fields that move money or data, the idempotency key, tier, decision id, nonce and a 5-minute expiry, signed with HMAC-SHA256. Three places check it: the module executor re-hashes what it is about to send (catching "approved ৳8,000, sent ৳80,000"), the provider verifies signature, expiry and hash against the body it received, and the provider stores the idempotency key so a retry returns the original transaction.
+
+**The safety breaker** (`guard/breaker.py`) turns STOP on by itself after 3 blocked attempts to move money, message someone, apply for a loan or change a setting within 15 minutes, counted from the audit log and afresh after every STOP or resume; the owner gets an urgent alert and resumes with the PIN.
+
+**The invoice check** (`guard/invoice_check.py`) reads every forwarded invoice with a deterministic parser (`core/invoice.py`) and compares it with the books: the supplier's saved number and the block list, "our number has changed", the same invoice twice or already in the bills, a total 1.5 times the supplier's usual or more, lines that do not add up, and hidden instructions. The verdict (ok, check, stop) and its reasons show as a card in the chat; check and stop also go to Alerts. It pays and books nothing.
 
 **Scheduled payments** are re-checked on their day (STOP, blocklist, trusted payee, daily cap) and get a fresh token. **STOP** freezes every tier 1–3 action, pauses scheduled payments and freezes the accounts at the provider; resuming needs the PIN. **The audit log** is a separate SQLite file, append-only and hash-chained, recording who asked, provenance, the proposed action, tier, every check, the decision, the plain-English reason and the provider's reference.
 
@@ -177,7 +183,8 @@ Customer credit (*baki*) that sits unpaid is the cash a micro-shop most often ru
 
 - **Monthly savings** (`modules/savings/`): the owner picks a share of each month's cash profit ("save 10% of my profit every month"). The amount is capped so the forecast stays above the safety buffer, and a month whose profit jumps to 1.6 times the usual or more counts as at most one and a half usual months, so one lucky month does not set an unaffordable target. Everything on the page can also be said in chat: the share, what it is a share of ("base it on the last 3 months"), pausing, goals, and the savings account ("my savings account is bKash 017…", held until the owner enters the PIN, with the full number shown, and never taken from forwarded content). Goals fill in order, and each transfer is a payment held for the PIN. The tab also lists real places to keep the money (a monthly DPS in the bKash app, three Sanchayapatra certificates at the July to December 2026 rates), dated and sourced, with which fits the shop's pace.
 - **Grow your shop** (`modules/growth/`): read-only, from the shop's own books: last month's money flow, the kind of shop it is, three 12-month profit paths (as now, stock put back from profit, overdue baki collected into stock) with an 80% band, and moves ranked by their taka effect. Every part is recomputed from the books on each visit, so it moves as the owner uses the app: collecting baki shrinks or removes that move, a filled cushion changes the kind of shop. How much to put back into stock is sized each month from what a usual month of the last three leaves after the household's withdrawals and the savings plan, capped by the kind of shop (10% for a choppy one up to 25% for a steady, growing one), with the reason in words; the owner can choose their own share instead, on the page or in chat ("put 15% back into stock"). While the cushion is short, moves that bring cash in (collecting baki, more supplier credit) are marked to start now; only putting profit into stock waits. Backtested on 4,047 cases across 400 synthetic shops, the "as now" path's profit one month ahead is off by a median 5.9% of money in, against 8.9% for "same as last month" ([results/growth_backtest.md](results/growth_backtest.md)).
-- **Reports** (`modules/reports/`): a printable monthly statement for the owner, and a six-month statement for a bank or NGO with no customer's name or number and the credit profile only with consent.
+- **Reports** (`modules/reports/`): a printable monthly statement for the owner, and a six-month statement for a bank or NGO with no customer's name or number and the credit profile only with consent. Both can be asked for in chat ("my report for September", "bank er jonno report", "ব্যাংকের জন্য রিপোর্ট"): the report appears as a card with Open and Save as PDF.
+- **The owner's data** (`guard/data_rights.py`): "export my data" in chat gives a download button for everything held (numbers masked). "Delete all my data", in chat or with the button under Export in the Credit tab, shows every kind of record and its count, needs the PIN, and deletes the books, baki, payments, chats, savings, credit and loan records; it keeps the profile and PIN, the safety settings, customers' own STOP replies and the audit log.
 
 ### 3.11 The advisor
 
@@ -204,18 +211,18 @@ The full self-assessment, with the exact file and function where each rule is en
 
 ## 6. Tests and evaluation
 
-**Automated tests.** <!--n:tests.passed-->955<!--/n--> of <!--n:tests.total-->955<!--/n--> pass in mock mode, with no API key and no network, on Ubuntu (Python 3.12) and Windows (Python 3.13) in CI:
+**Automated tests.** <!--n:tests.passed-->1064<!--/n--> of <!--n:tests.total-->1064<!--/n--> pass in mock mode, with no API key and no network, on Ubuntu (Python 3.12) and Windows (Python 3.13) in CI:
 
 <!--t:tests.by_suite-->
 | Suite | Passed | Tests |
 |---|---:|---:|
-| Unit tests: parsers, guard rules and tiers, PIN, audit chain, forecast, credit, loans | 582 | 582 |
-| End-to-end scenarios through the API (mock model, real provider in-process) | 163 | 163 |
+| Unit tests: parsers, guard rules and tiers, PIN, audit chain, forecast, credit, loans | 668 | 668 |
+| End-to-end scenarios through the API (mock model, real provider in-process) | 186 | 186 |
 | Architecture rules (the agent cannot reach executors, the database or the key) | 15 | 15 |
 | Simulated provider (signature checks, idempotency, freeze) | 25 | 25 |
 | Synthetic data generator | 10 | 10 |
 | Red-team suite (one test per attack and per genuine request) | 160 | 160 |
-| **All** | **955** | **955** |
+| **All** | **1064** | **1064** |
 <!--/t-->
 
 The brief's scenario list is covered end to end against the real provider: a sale from typed text, a bKash SMS, a malformed SMS refused politely; a trusted payment within limits (tier 2); over the limit (PIN; correct PIN executes; three wrong PINs lock); a new payee and a known name at a changed number (tier 3); a split payment; the ৳50,000 injection from a stranger, inside an SMS and inside an invoice; STOP pausing a scheduled payment until resumed with the PIN; the forecast's shortfall; the credit profile, loan match and an approved application; and a duplicate payment request that pays once.

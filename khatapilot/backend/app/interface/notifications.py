@@ -72,6 +72,12 @@ def _alert(entry: AuditEntry) -> Notice:
     summary, reason = entry.summary, entry.reason
     if summary.startswith("Blocked:"):
         return Notice("security", "urgent", summary, reason, "audit")
+    if summary.startswith("Safety breaker"):
+        return Notice("security", "urgent", summary, reason, "controls")
+    if summary.startswith("Invoice check: Do not pay"):
+        return Notice("money", "urgent", summary.removeprefix("Invoice check: "), reason, "chat")
+    if summary.startswith("Invoice check"):
+        return Notice("money", "important", summary.removeprefix("Invoice check: "), reason, "chat")
     if summary.startswith("Possible fake "):
         return Notice("security", "urgent", summary, reason, "ledger")
     if summary.startswith("Phone SMS waits for you"):
@@ -121,6 +127,8 @@ def _execution(entry: AuditEntry) -> Notice | None:
         if decision == "FAILED":
             return Notice("customers", "important", f"Not delivered: {summary}", reason, "ledger")
         return None
+    if decision == "CHANGED" and summary.startswith("Delete all your shop's data"):
+        return Notice("security", "important", "All your shop's data was deleted", reason, "credit")
     if decision == "CHANGED":
         return Notice("security", "info", f"Setting changed: {summary}", reason, "controls")
     return None
@@ -146,6 +154,8 @@ def classify(entry: AuditEntry) -> Notice | None:
         if decision == "PIN_WRONG":
             return Notice("security", "important", "Wrong PIN entered", f"{entry.summary}. {entry.reason}", "audit")
         return None
+    if event == "owner_control" and decision == "ERASED":
+        return Notice("security", "important", "All your shop's data was deleted", entry.reason, "credit")
     if event == "owner_control":
         return Notice("security", "info", f"Setting changed: {entry.summary}", entry.reason, "controls")
     if event == "report":

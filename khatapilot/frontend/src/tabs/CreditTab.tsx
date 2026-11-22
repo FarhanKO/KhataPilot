@@ -1,9 +1,10 @@
-import { Download, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { api, errorText } from "../api";
 import { dateTimeLabel, pct, taka } from "../format";
 import { useData } from "../hooks";
+import { DeleteDataButton, ExportDataButton } from "../components/DataActions";
 import { useApp } from "../state";
 import type { Consent, CreditProfile, Reason } from "../types";
 import { Badge, Button, Card, Eyebrow, Loading, Note, Page, PageHeader, tdClass, thClass, TONE_TEXT, type Tone } from "../ui";
@@ -81,23 +82,6 @@ export function CreditTab() {
     }
   }
 
-  async function exportData() {
-    setBusy("export");
-    try {
-      const data = await api.get<unknown>("/data/export");
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "khatapilot-my-data.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      toast(errorText(e), "bad");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   if (consent.error) return <Page><Note tone="bad">{consent.error}</Note></Page>;
   if (!consent.data) return <Page><Loading /></Page>;
 
@@ -124,9 +108,10 @@ export function CreditTab() {
               <Button variant="primary" busy={busy === "grant"} onClick={() => act("grant", () => api.post("/credit/consent"), "Consent recorded.")}>
                 I agree: build my credit profile
               </Button>
-              <Button variant="ghost" busy={busy === "export"} onClick={exportData}>
-                <Download className="size-4" /> Export my data
-              </Button>
+              <ExportDataButton variant="ghost" />
+            </div>
+            <div className="border-t border-line pt-4">
+              <DeleteDataButton />
             </div>
             <p className="text-xs text-faint">Only you can give or withdraw consent, here. The chat assistant cannot do it for you.</p>
           </div>
@@ -154,9 +139,10 @@ export function CreditTab() {
               <RefreshCw className="size-3.5" />
               {p ? "Rebuild from today's books" : "Build my profile"}
             </Button>
-            <Button variant="secondary" size="sm" busy={busy === "export"} onClick={exportData}>
-              <Download className="size-3.5" /> Export my data
-            </Button>
+            <div className="flex flex-col items-start gap-1">
+              <ExportDataButton size="sm" />
+              <DeleteDataButton size="sm" />
+            </div>
             <Button
               variant="dangerGhost"
               size="sm"

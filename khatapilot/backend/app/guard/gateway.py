@@ -18,6 +18,7 @@ from app.core.actions import ActionKind, ProposedAction
 from app.core.decisions import Decision, Outcome
 from app.core.provenance import TurnContext
 from app.guard.approvals import ApprovalService
+from app.guard.breaker import SafetyBreaker
 from app.guard.engine import PolicyEngine
 from app.guard.executor import ActionExecutor, ExecutionMeta
 from app.guard.recorder import Recorder, actor_of
@@ -77,11 +78,12 @@ class ToolSpec:
 
 class ToolGateway:
     def __init__(self, *, engine: PolicyEngine, approvals: ApprovalService, executor: ActionExecutor,
-                 recorder: Recorder) -> None:
+                 recorder: Recorder, breaker: SafetyBreaker | None = None) -> None:
         self.engine = engine
         self.approvals = approvals
         self.executor = executor
         self.recorder = recorder
+        self.breaker = breaker
         self._tools: dict[str, ToolSpec] = {}
 
     def register(self, spec: ToolSpec) -> None:
@@ -124,7 +126,10 @@ class ToolGateway:
                 self.recorder.alert(request_id=turn.request_id, channel=turn.channel,
                                     summary=f"Blocked: {decision.action.summary}", reason=decision.reason,
                                     decision_id=decision.decision_id)
-            return ToolOutcome(status="blocked", message=decision.reason, **base)
+            tripped = self.breaker.after_block(decision, turn) if self.breaker else None
+            message = f"{decision.reason} {tripped}" if tripped else decision.reason
+            return ToolOutcome(status="blocked", message=message,
+                               data={"safety_breaker": True} if tripped else None, **base)
 
         if decision.outcome in (Outcome.HOLD_APPROVAL, Outcome.HOLD_PIN):
             pending = self.approvals.create(decision, turn)

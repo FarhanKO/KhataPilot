@@ -12,6 +12,7 @@ from app.core.ids import new_id
 from app.core.masking import mask_text
 from app.core.money import to_paisa
 from app.core.provenance import Provenance, Segment, Sender, TurnContext
+from app.guard import data_rights
 from app.guard.gateway import ToolCall, ToolOutcome
 from app.guard.service import Guard
 from app.interface.api.views import _masked
@@ -137,6 +138,14 @@ def applications(container=Depends(get_container), _owner: Sender = Depends(requ
 
 
 # ---- the owner's data
+
+@router.get("/data/erase-preview")
+def erase_preview(container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> dict:
+    """What "delete all my data" would delete, and what it keeps, before the owner enters the PIN."""
+    with container.db.session() as session:
+        guard = _guard(container, session)
+        return data_rights.preview(session, guard.shop_id).view()
+
 
 @router.get("/data/export")
 def export(container=Depends(get_container), _owner: Sender = Depends(require_owner)) -> dict:

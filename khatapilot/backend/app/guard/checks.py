@@ -13,6 +13,7 @@ from app.core.decisions import CheckResult, CheckStatus
 from app.core.masking import find_phone_numbers, mask_number, mask_phone, mask_text, normalize_msisdn
 from app.core.money import find_amounts, fmt_taka, normalize_digits
 from app.core.provenance import Provenance, TurnContext
+from app.guard.data_rights import ERASE_WORDS
 from app.guard.injection import InjectionReport
 from app.guard.intent import IntentMatch
 from app.guard.policy_store import KillSwitchView, Limits, TrustedPayeeView, normalize_name
@@ -486,6 +487,14 @@ def owner_settings(ctx: CheckContext) -> CheckResult:
                            "stops every payment to them.", tier=1)
         return _result("owner_settings", label, CheckStatus.PASS,
                        "Blocking only makes the shop safer; you still tap Approve.")
+    if what == "erase_data":
+        if not ERASE_WORDS.search(owner or ""):
+            return _result("owner_settings", label, CheckStatus.BLOCK,
+                           "Deleting your data needs you to ask for it in your own words (for example \"delete all my "
+                           "data\"); nothing else can start it.")
+        return _result("owner_settings", label, CheckStatus.ESCALATE,
+                       "Everything listed is deleted for good once you confirm with your PIN; it cannot be undone.",
+                       tier=3)
     return _result("owner_settings", label, CheckStatus.BLOCK, "Unknown settings change.")
 
 

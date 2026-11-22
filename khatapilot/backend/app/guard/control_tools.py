@@ -19,6 +19,7 @@ from app.core.masking import mask_number
 from app.core.money import fmt_taka, to_paisa
 from app.core.provenance import TurnContext
 from app.guard import control_changes as changes
+from app.guard import data_rights
 from app.guard.executor import ExecutionMeta, ExecutionResult
 from app.guard.gateway import ToolRefusal, ToolSpec
 from app.guard.policy_store import normalize_number
@@ -241,6 +242,10 @@ def apply_control(guard: Guard, action: ProposedAction, decision_id: str, tier: 
             result = changes.ChangeResult(True, f"Savings will go to {account.name} ({account.number_masked}, "
                                                 f"{account.method}).",
                                           {"name": account.name, "number": account.number_masked})
+    elif what == "erase_data":
+        done = data_rights.erase(guard.session, guard.shop_id, keep_decision=decision_id)
+        result = changes.ChangeResult(True, f"Deleted {done.total:,} records: {', '.join(done.lines()) or 'nothing was left'}. "
+                                            f"{data_rights.KEPT_WORDS}", done.view())
     else:
         result = changes.ChangeResult(False, "Unknown settings change.")
     guard.recorder.event(request_id=meta.request_id, channel=meta.channel, actor=meta.actor, provenance=meta.provenance,

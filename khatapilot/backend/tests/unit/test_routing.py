@@ -6,7 +6,7 @@ import pytest
 
 from app.agent.llm.mock_provider import MockProvider
 from app.agent.llm.types import HistoryMessage, LLMError, LLMStep, LLMToolCall, SegmentBrief, TurnBrief
-from app.agent.orchestrator import Orchestrator
+from app.agent.orchestrator import OFFLINE_REPLY, Orchestrator
 from app.agent.routing import choose
 from app.core.clock import BDT
 from tests.unit.test_agent import RecordingPort, ScriptedProvider
@@ -47,7 +47,7 @@ def test_plain_requests_go_to_the_rules(text):
     ("what about last week?", "a follow-up"),
     ("sold rice 1500 and dal 800", "two amounts"),
     ("আজকের বিক্রি কত", "Bangla script"),
-    ("hello", "not a phrase the rules know"),
+    ("tell me a joke", "not a phrase the rules know"),
     ("sold 3 bags of rice 1500 cash to the man from the market who comes every friday morning early", "too long"),
 ])
 def test_anything_else_goes_to_the_model(text, why):
@@ -120,5 +120,7 @@ def test_no_fallback_once_the_model_has_acted():
 
 
 def test_no_fallback_unless_asked():
+    """Without the offline planner the owner still gets a calm reply, not the service's error text."""
     reply, _, _ = run(ScriptedProvider(LLMError("down", transient=True)), "what's my balance?")
-    assert reply.route == "model" and "Nothing was changed" in reply.text
+    assert reply.route == "offline" and reply.text == OFFLINE_REPLY and "Nothing was changed" in reply.text
+    assert reply.route_reason == "down", "the technical reason goes to the trace"

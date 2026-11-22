@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import { api, errorText } from "../api";
+import { OutcomeCards } from "../components/ChatCards";
 import { KhataThinking } from "../components/KhataThinking";
 import { PastChats } from "../components/PastChats";
 import { StatusIsland, type IslandTask } from "../components/StatusIsland";
@@ -241,6 +242,7 @@ function Bubble({ message }: { message: ChatMessage }) {
           ))}
         </div>
       )}
+      {!!message.outcomes?.length && <OutcomeCards outcomes={message.outcomes} />}
       {message.outcomes
         ?.filter((o) => o.status === "asked" && (o.data as SmsAskData | null)?.question_id)
         .map((o) => <SmsAskCard key={(o.data as SmsAskData).question_id} ask={o.data as SmsAskData} />)}

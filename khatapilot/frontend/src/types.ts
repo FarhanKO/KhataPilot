@@ -178,6 +178,40 @@ export interface ControlResult {
   frozen?: boolean;
 }
 
+/** What "delete all my data" would delete (GET /data/erase-preview), and what it keeps. */
+export interface ErasePreview {
+  total: number;
+  items: { what: string; count: number }[];
+  scheduled_payments: number;
+  kept: string;
+}
+
+/** make_report's result in chat: a monthly report ready to open or save as a PDF. */
+export interface ReportReady {
+  report: {
+    kind: "owner" | "lender";
+    month: string;
+    title: string;
+    period: string;
+    headline: string;
+    figures: { label: string; value: string }[];
+  };
+}
+
+/** check_invoice's result in chat. */
+export interface InvoiceCheckData {
+  supplier: string;
+  matched_supplier: string | null;
+  invoice_number: string | null;
+  total: string | null;
+  due: string | null;
+  items: { item: string; amount: string }[];
+  pay_to_numbers: string[];
+  verdict: "ok" | "check" | "stop";
+  headline: string;
+  findings: { level: "note" | "check" | "stop"; text: string }[];
+}
+
 export interface DayTotals {
   day: string;
   sales_paisa: number;
