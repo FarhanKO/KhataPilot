@@ -673,7 +673,8 @@ REPORT_WORDS = re.compile(r"\b(?:reports?|statements?|pdf|hisab\s*(?:er|ar)?\s*(
                           r"masik\s+hisab)\b|রিপোর্ট|পিডিএফ|স্টেটমেন্ট|হিসাবের\s*কাগজ", re.I)
 LENDER_WORDS = re.compile(r"\b(?:bank|banks|lender|ngo|loan|loans|microfinance|mfi|rin)\b|ব্যাংক|লোন|ঋণ|এনজিও",
                           re.I)
-DATA_NOUN = re.compile(r"\b(?:data|everything|all\s+(?:my\s+)?(?:records|information|info|books)|my\s+(?:records|"
+DATA_NOUN = re.compile(r"^\W*\w+\s+(?:it\s+)?all\W*$|\b(?:all\s+(?:my\s+|the\s+)?files|my\s+files|files)\b|"
+                       r"\b(?:data|everything|all\s+(?:my\s+)?(?:records|information|info|books)|my\s+(?:records|"
                        r"information|info|books)|sob\s+(?:kichu|tottho|hisab)|tottho)\b|তথ্য|ডাটা|ডেটা|সব\s*কিছু|"
                        r"সব\s*হিসাব|রেকর্ড", re.I)
 EXPORT_VERB = re.compile(r"\b(?:export|download|backup|back\s+up|copy\s+of)\b|ডাউনলোড|এক্সপোর্ট|কপি", re.I)
@@ -714,6 +715,48 @@ def plan_data(t: str, today: date) -> list[LLMToolCall] | None:
     return None
 
 
+DELETE_VERB = re.compile(r"\b(?:delete|remove|cancel|undo|erase|drop|scrap)\b|\b(?:bad|baad|kete|muche)\s+(?:dao|den|felo)\b|"
+                         r"ডিলিট|মুছ|বাদ", re.I)
+REMINDER_CANCEL_NAME = (  # tried in order: "reminder for Monir" first, so "delete the reminder" is not "the"
+    re.compile(rf"\breminders?\s+(?:to|for|of|from)\s+(?P<n>{NAME})", re.I),
+    re.compile(rf"\b(?:delete|remove|cancel|drop)\s+(?P<n>{NAME}?)(?:'s|’s|\s+er|\s+r)?\s+reminders?\b", re.I),
+    re.compile(rf"^\s*(?P<n>{NAME}?)(?:'s|’s|\s+er|\s+r)\s+reminders?\b", re.I))
+ENTRY_WORDS = re.compile(r"\b(?:entry|entries|that|this|it|last|transaction|record|mistake|wrong|sale|sales|expense|"
+                         r"purchase|kena|bikri|khoroch)\b|\bundo\b", re.I)
+ENTRY_KINDS = (("baki_sale", r"\bbaki sale\b"), ("sale", r"\b(?:sale|sold|bikri)\b"),
+               ("purchase", r"\b(?:purchase|bought|kena|kinlam)\b"), ("expense", r"\b(?:expense|khoroch)\b"))
+
+
+def plan_delete(t: str) -> list[LLMToolCall] | None:
+    """A reminder or a single entry the owner wants gone. Bills, baki, goals, trusted payees and delete-all
+    have their own planners."""
+    low = t.lower()
+    if not DELETE_VERB.search(t):
+        return None
+    if REMINDER_WORDS.search(low):
+        who = None
+        for pattern in REMINDER_CANCEL_NAME:
+            if m := pattern.search(t):
+                raw = re.sub(r"(?i)^(?:the|my|baki)\s+|(?:'s|’s)$", "", m.group("n").strip())
+                who = clip_name(raw)
+                if who and who.lower() not in {"the", "my", "this", "that", "baki", "all", "every"}:
+                    break
+                who = None
+        return [call("cancel_reminder", customer_name=who)] if who else []
+    if re.search(r"\b(?:bills?|baki|debts?|depts?|goals?|trusted|dues?)\b", low):
+        return None
+    if not ENTRY_WORDS.search(low):
+        return None
+    amounts = amounts_in(t)
+    who = None
+    if m := re.search(rf"\b(?:to|from|with|for)\s+(?P<n>{NAME})", t, re.I):
+        who = clip_name(m.group("n"))
+        if who and who.lower().split()[0] in {"the", "my", "this", "that", "it", "today", "yesterday", "cash"}:
+            who = None
+    kind = next((k for k, pat in ENTRY_KINDS if re.search(pat, low)), None)
+    return [call("delete_entry", amount_taka=str(amounts[0]) if amounts else None, counterparty_name=who, kind=kind)]
+
+
 def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
     t = normalize_digits(text).strip()
     low = t.lower()
@@ -724,6 +767,10 @@ def plan_owner_text(text: str, today: date) -> list[LLMToolCall]:
     # Reports, export and delete-all (first: "a report for the bank" is not a loan, "delete all" not a bill)
     if (data_calls := plan_data(t, today)) is not None:
         return data_calls
+
+    # One reminder or one entry to delete (before reminders: "delete the reminder for Monir" sends nothing)
+    if (delete_calls := plan_delete(t)) is not None:
+        return delete_calls
 
     # Credit profile and loans (checked first: "a loan to pay Meghna" is a loan question, not a payment)
     if re.search(r"\b(credit (?:score|profile|rating)|score koto|creditworth\w*)\b", low) and \
@@ -1326,6 +1373,10 @@ def describe(tool: str, outcome) -> str:
         who = "; ".join(f"{r['customer']}: {r['outcome'].replace('_', ' ')}, still owes {r['still_owes']}" for r in rows[:5])
         return (f"Since the reminders: {data.get('paid', 0)} paid in full, {data.get('part_paid', 0)} in part, "
                 f"{data.get('waiting', 0)} not yet. {who}.")
+    if tool == "cancel_reminder":
+        return f"Done: {data.get('meaning', '')}".strip()
+    if tool == "delete_entry":
+        return f"Deleted the entry: {data.get('deleted')}. {data.get('note', '')}".strip()
     if tool == "set_reminder_opt_out":
         if data.get("reminders") == "off":
             already = "were already off" if data.get("already") else "are off"

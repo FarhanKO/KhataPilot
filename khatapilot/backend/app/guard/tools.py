@@ -313,6 +313,18 @@ class ReminderOptOutArgs(StrictArgs):
         "('start Babul's reminders again'); only works if the owner stopped them, never a customer's own STOP."))
 
 
+class CancelReminderArgs(StrictArgs):
+    customer_name: str = Field(min_length=1, max_length=64, description="The customer, as the owner named them.")
+
+
+class DeleteEntryArgs(StrictArgs):
+    counterparty_name: str | None = Field(default=None, max_length=128, description=(
+        "Only if the owner named who the entry was with ('delete the sale to Rahim')."))
+    amount_taka: Decimal | None = Field(default=None, gt=0, le=10_000_000, description=(
+        "Only if the owner said the amount ('delete the 500 entry')."))
+    kind: EntryKind | None = Field(default=None, description="Only if the owner said what kind it was (sale, expense...).")
+
+
 class RecentArgs(StrictArgs):
     limit: int = Field(default=10, ge=1, le=50)
 
@@ -1265,6 +1277,53 @@ def register_core_tools(guard: Guard) -> None:
         handler=recent,
     ))
 
+    def pick_entry(args: DeleteEntryArgs):
+        want = to_paisa(args.amount_taka) if args.amount_taka is not None else None
+        who = (args.counterparty_name or "").strip().lower()
+        for e in guard.ledger.recent_recorded(shop, limit=50):
+            if want is not None and e.amount_paisa != want:
+                continue
+            if args.kind is not None and e.kind != args.kind:
+                continue
+            if who and who not in (e.counterparty_name or "").lower():
+                continue
+            return e
+        raise ToolRefusal("I could not find a recent entry like that, so nothing was deleted. Say the amount or "
+                          "the name on it, e.g. \"delete the 500 sale to Rahim\".")
+
+    def entry_line(e) -> str:
+        who = f" {e.counterparty_name}" if e.counterparty_name else ""
+        return f"{e.kind.replace('_', ' ')} {fmt_taka(e.amount_paisa)}{who} ({e.method}, {e.local_date:%a %d %b})"
+
+    def delete_entry_action(args: DeleteEntryArgs, _turn: TurnContext) -> ProposedAction:
+        e = pick_entry(args)
+        params: dict[str, Any] = {"entry_id": e.id}
+        if args.amount_taka is not None:
+            params["amount_paisa"] = to_paisa(args.amount_taka)
+        if args.counterparty_name:
+            params["payee_name"] = args.counterparty_name
+        return simple_action("delete_entry", ActionKind.LEDGER_WRITE, f"Delete the entry: {entry_line(e)}", params)
+
+    def delete_entry(args: DeleteEntryArgs, decision, _turn: TurnContext) -> dict[str, Any]:
+        try:
+            gone = guard.ledger.delete_entry(shop, decision.action.params["entry_id"])
+        except LookupError as exc:
+            raise ToolRefusal("That entry is already gone, so nothing was deleted.") from exc
+        return {"deleted": entry_line(gone),
+                "note": "Totals, balances and baki no longer count it. Record it again if this was a mistake."}
+
+    gateway.register(ToolSpec(
+        name="delete_entry",
+        description=("Delete one ledger entry the owner made by mistake: the last one ('delete that entry', 'undo "
+                     "the last entry', 'eta bad dao'), or the recent one matching the amount, name or kind they say "
+                     "('delete the 500 sale to Rahim'). Not for bills (delete_bill), baki (change_baki) or "
+                     "everything (erase_my_data)."),
+        kind=ActionKind.LEDGER_WRITE,
+        args_model=DeleteEntryArgs,
+        to_action=delete_entry_action,
+        handler=delete_entry,
+    ))
+
     def list_payees(_args, _decision, _turn) -> list[dict]:
         return [{"name": p.name, "number": p.number_masked, "method": p.method} for p in guard.store.payees()]
 
@@ -1727,6 +1786,52 @@ def register_core_tools(guard: Guard) -> None:
             f"{'Stop' if a.stop else 'Allow'} baki reminders {'to' if a.stop else 'for'} {a.customer_name}",
             {"customer_name": a.customer_name, "stop": a.stop}),
         handler=opt_out,
+    ))
+
+    def cancel_reminder(args: CancelReminderArgs, _decision, turn: TurnContext) -> dict[str, Any]:
+        """Take the customer out of any reminder batch waiting for approval; if none waits, stop future ones."""
+        want = args.customer_name.strip().lower()
+        removed = []
+        for p in guard.approvals.pending():
+            if p.tool != "send_reminders":
+                continue
+            for d in p.action.get("params", {}).get("reminders", []):
+                name = d.get("customer_name", "")
+                if want in name.lower():
+                    result = guard.approvals.remove_reminder(p.id, name, request_id=turn.request_id,
+                                                             channel=turn.channel)
+                    if result.ok:
+                        removed.append(name)
+                    break
+        if removed:
+            return {"customer": removed[0], "removed_from_waiting": True,
+                    "meaning": f"{removed[0]} was taken out of the reminders waiting for your approval; no "
+                               "reminder will go to them. Their baki stays in the books."}
+        matches = guard.ledger.debtors_matching(shop, args.customer_name.strip())
+        if len(matches) > 1:
+            raise ToolRefusal(f"More than one customer is called {args.customer_name} ("
+                              + ", ".join(m.name for m in matches[:4]) + "); say the full name.")
+        try:
+            name, number = guard.reminders.customer_number(matches[0].name if matches else args.customer_name)
+            new = guard.reminders.opt_out(number, source="owner", name=name)
+        except (NothingToRemind, OptOutLocked) as exc:
+            raise ToolRefusal(str(exc)) from exc
+        return {"customer": name, "reminders": "off", "already": not new,
+                "meaning": f"No reminder was waiting for {name}, so I turned their reminders off: KhataPilot will "
+                           "not prepare or send them any. Say \"start reminders for "
+                           f"{name.split()[0]}\" to allow them again. Their baki stays in the books."}
+
+    gateway.register(ToolSpec(
+        name="cancel_reminder",
+        description=("Delete or cancel a baki reminder for one customer ('delete the reminder for Monir', 'Monir er "
+                     "reminder bad dao'): takes them out of reminders waiting for approval, or, if none waits, stops "
+                     "reminders to them. Sends nothing and changes no baki."),
+        kind=ActionKind.LEDGER_WRITE,
+        args_model=CancelReminderArgs,
+        to_action=lambda a, _t: simple_action("cancel_reminder", ActionKind.LEDGER_WRITE,
+                                              f"Cancel baki reminders for {a.customer_name}",
+                                              {"customer_name": a.customer_name}),
+        handler=cancel_reminder,
     ))
 
     gateway.register(ToolSpec(

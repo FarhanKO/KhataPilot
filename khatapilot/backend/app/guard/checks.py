@@ -260,7 +260,17 @@ def grounded(ctx: CheckContext) -> CheckResult:
             return _result("grounded", label, CheckStatus.PASS, f"You named the {name} goal in your own message.")
         return _result("grounded", label, CheckStatus.BLOCK,
                        f"You did not name the {name} goal in your message, so it was not removed.")
-    if ctx.action.tool == "set_reminder_opt_out":
+    if ctx.action.tool == "delete_entry":
+        name, amount = params.get("payee_name"), params.get("amount_paisa")
+        if isinstance(name, str) and name and not named_by_owner(name, ctx.turn.owner_text):
+            return _result("grounded", label, CheckStatus.BLOCK,
+                           f"You did not name {mask_text(name)} in your message, so nothing was deleted.")
+        if isinstance(amount, int) and amount not in find_amounts(ctx.turn.owner_text):
+            return _result("grounded", label, CheckStatus.BLOCK,
+                           f"{fmt_taka(amount)} is not in your message, so nothing was deleted.")
+        return _result("grounded", label, CheckStatus.PASS,
+                       "The entry was picked from your own books by what you said in your message.")
+    if ctx.action.tool in ("set_reminder_opt_out", "cancel_reminder"):
         name = str(params.get("customer_name") or "")
         if named_by_owner(name, ctx.turn.owner_text):
             return _result("grounded", label, CheckStatus.PASS, f"You named {name} in your own message.")

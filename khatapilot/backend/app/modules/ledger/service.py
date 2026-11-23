@@ -335,6 +335,24 @@ class LedgerService:
         self.session.flush()
         return ObligationView.model_validate(row)
 
+    def recent_recorded(self, shop_id: str, limit: int = 50) -> list[LedgerEntryView]:
+        """The entries recorded most recently (by when they were typed in, not the day they are for)."""
+        # Seeded demo history can carry later timestamps than what the owner just typed, so it comes last.
+        query = (select(LedgerEntry).where(LedgerEntry.shop_id == shop_id)
+                 .order_by((LedgerEntry.source == "seed").asc(), LedgerEntry.created_at.desc(),
+                           LedgerEntry.id.desc()).limit(limit))
+        return [LedgerEntryView.model_validate(r) for r in self.session.scalars(query)]
+
+    def delete_entry(self, shop_id: str, entry_id: str) -> LedgerEntryView:
+        """The owner took back an entry made by mistake. The row goes; the audit log keeps what it was."""
+        row = self.session.get(LedgerEntry, entry_id)
+        if row is None or row.shop_id != shop_id:
+            raise LookupError(f"no entry {entry_id}")
+        view = LedgerEntryView.model_validate(row)
+        self.session.delete(row)
+        self.session.flush()
+        return view
+
     def _open_obligation(self, shop_id: str, obligation_id: str) -> Obligation:
         row = self.session.get(Obligation, obligation_id)
         if row is None or row.shop_id != shop_id or row.status != "open":
