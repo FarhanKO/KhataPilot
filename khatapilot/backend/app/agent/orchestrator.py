@@ -31,9 +31,7 @@ from app.guard.api import ToolCall, ToolOutcome, ToolPort
 
 REFUSAL_REPLY = ("I can't help with that one, so I didn't do anything. If it's about the shop's money or "
                  "books, try asking in a different way.")
-OFFLINE_REPLY = ("The AI model is offline right now, so I can't get your data for that request. Nothing was "
-                 "changed. Simple requests still work offline, like \"today's sales\", \"who owes me?\", \"will I run "
-                 "short of cash?\" or \"sold 3 bags of rice ৳1,500 cash\". Try again in a little while for the rest.")
+OFFLINE_REPLY = HELP_REPLY
 CAPPED_REPLY = ("This month's AI budget is used up, so I can only use the offline rules, and they didn't understand "
                 "that. Nothing was changed. Simple requests still work, like \"today's sales\" or \"who owes me?\".")
 

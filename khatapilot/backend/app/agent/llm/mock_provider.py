@@ -722,8 +722,10 @@ REMINDER_CANCEL_NAME = (  # tried in order: "reminder for Monir" first, so "dele
     re.compile(rf"\b(?:delete|remove|cancel|drop)\s+(?P<n>{NAME}?)(?:'s|’s|\s+er|\s+r)?\s+reminders?\b", re.I),
     re.compile(rf"^\s*(?P<n>{NAME}?)(?:'s|’s|\s+er|\s+r)\s+reminders?\b", re.I))
 ENTRY_WORDS = re.compile(r"\b(?:entry|entries|that|this|it|last|transaction|record|mistake|wrong|sale|sales|expense|"
-                         r"purchase|kena|bikri|khoroch)\b|\bundo\b", re.I)
-ENTRY_KINDS = (("baki_sale", r"\bbaki sale\b"), ("sale", r"\b(?:sale|sold|bikri)\b"),
+                         r"purchase|kena|bikri|khoroch|payments?|repayment|drawing)\b|\bundo\b", re.I)
+ENTRY_KINDS = (("baki_sale", r"\bbaki sale\b"), ("supplier_payment", r"\bsupplier payments?\b"),
+               ("baki_repayment", r"\b(?:baki )?repayment\b"), ("owner_drawing", r"\bdrawing\b"),
+               ("sale", r"\b(?:sale|sold|bikri)\b"),
                ("purchase", r"\b(?:purchase|bought|kena|kinlam)\b"), ("expense", r"\b(?:expense|khoroch)\b"))
 
 
@@ -749,7 +751,7 @@ def plan_delete(t: str) -> list[LLMToolCall] | None:
         return None
     amounts = amounts_in(t)
     who = None
-    if m := re.search(rf"\b(?:to|from|with|for)\s+(?P<n>{NAME})", t, re.I):
+    if m := re.search(rf"\b(?:to|from|with|for|of)\s+(?P<n>{NAME})", re.sub(r"[.!?]+\s*$", "", t), re.I):
         who = clip_name(m.group("n"))
         if who and who.lower().split()[0] in {"the", "my", "this", "that", "it", "today", "yesterday", "cash"}:
             who = None
@@ -1408,9 +1410,16 @@ def describe_bills(tool: str, data: dict) -> str:
     return f"{len(data['bills'])} open bills, {data['total_due']} in all: {lines}."
 
 
-HELP_REPLY = ("I can record sales, purchases and bKash/Nagad SMS, show today's totals and balances, list who owes "
-              "you, warn you before cash runs short, pay suppliers within your limits, and find you a loan. "
-              "For example: \"sold 3 bags of rice ৳1,500 cash\".")
+CAN_DO = ("Things I can do:\n"
+          "- Record a sale or purchase\n"
+          "- Read a bKash or Nagad SMS\n"
+          "- Show today's sales and balances\n"
+          "- Show who owes you\n"
+          "- Warn you before cash runs short\n"
+          "- Delete an entry, bill or reminder\n"
+          "- Pay a supplier within your limits\n"
+          "- Find you a loan")
+HELP_REPLY = "I'm in offline mode, so I can't do this right now. Nothing was changed.\n\n" + CAN_DO
 
 
 def compose(brief: TurnBrief, calls: list[LLMToolCall], results: list[ToolResult]) -> str:

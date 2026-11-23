@@ -185,7 +185,7 @@ def test_a_number_without_an_amount_is_asked_about_masked():
 
 @pytest.mark.parametrize("text", ["hello, how are you?", "send a message to Jamal"])
 def test_things_that_are_not_payments_get_the_usual_help(text):
-    assert reply_to(text).startswith("I can record")
+    assert reply_to(text).startswith("I'm in offline mode")
 
 
 def test_send_reminders_is_not_a_payment():

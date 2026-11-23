@@ -30,7 +30,6 @@ const GROUPS: { label: string; items: string[] }[] = [
 ];
 const SUGGESTIONS = GROUPS.flatMap((g) => g.items);
 
-const OUTCOME_TONE = { ok: "ok", held: "warn", blocked: "bad", error: "bad", asked: "warn" } as const;
 
 /** Money in from a customer who owes baki: the owner says what it is for, and only then is it booked. */
 function SmsAskCard({ ask }: { ask: SmsAskData }) {
@@ -223,23 +222,12 @@ function Bubble({ message }: { message: ChatMessage }) {
   return (
     <div className="flex flex-col items-start gap-2">
       <span className="label flex items-center gap-1.5 text-[10px] text-faint">
-        <Marker />
-        KhataPilot · {timeLabel(message.at)}
+        {timeLabel(message.at)}
         <RouteTag route={message.route} reason={message.routeReason} />
       </span>
       {message.text && (
         <div className="max-w-[min(92%,38rem)] rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-3 text-[14.5px] leading-relaxed">
           <ReplyText text={message.text} />
-        </div>
-      )}
-      {!!message.outcomes?.length && (
-        <div className="flex flex-wrap gap-1">
-          {message.outcomes.map((o, i) => (
-            <Badge key={i} tone={OUTCOME_TONE[o.status]}>
-              {o.tool.replace(/_/g, " ")}: {o.status}
-              {o.tier !== null ? ` · T${o.tier}` : ""}
-            </Badge>
-          ))}
         </div>
       )}
       {!!message.outcomes?.length && <OutcomeCards outcomes={message.outcomes} />}

@@ -30,7 +30,7 @@ export function dayLabel(iso: string, long = false): string {
 }
 
 export function timeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: DHAKA });
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: DHAKA });
 }
 
 export function dateTimeLabel(iso: string): string {
