@@ -1,9 +1,3 @@
-For this project, my team held detailed discussions with over 70 shop owners across various locations in Dhaka.
-In most cases, they expressed similar needs, such as:
-1. Reminders for outstanding payments (dues)
-2. Smart bookkeeping
-3. Advice on managing cash shortfalls
-4. Guidance on savings
-5. Assistance in securing loans
-6. Secure payments to suppliers
-
+Addressing Vulnerabilities: Even today, certain vulnerabilities exist—such as scammers attempting to fake large payments or inventory transactions (similar to fraud that happens in offline business).
+​Built-in Security System: To counter this, we have integrated smart security layers into KhataPilot capable of detecting and blocking scams in real time.
+​Example Use Case: Flagging or verifying unusually large transactions occurring between two shop owners operating from completely different locations.
