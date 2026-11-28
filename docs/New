@@ -1,76 +1,9 @@
-KHATAPILOT — PRESENTATION SCRIPT
-1. The Core Idea
-Yes, this is promising. But let's build some trust in that promise by taking a closer look at the entire project.
-At first glance, KhataPilot might seem like another AI assistant doing everything for the user. But our actual idea is quite different.
-The AI only proposes. The Guard decides. The Core does the work.
-We all know AI can be fooled. So instead of trying to build an AI that never makes mistakes, we built a system where even a fooled AI cannot move money or perform unauthorized actions.
-The AI understands requests and proposes actions. The Guard independently checks permissions, enforces limits, blocks attacks and records every decision. Only properly authorized, signed actions reach the execution layer.
-2. How the Owner Interacts With KhataPilot
-Every action receives one of four outcomes:
-Green: Allowed automatically, within the owner's limits.
-Wait for a Tap: Requires explicit confirmation.
-Wait for PIN: Requires stronger authorization.
-Red: Rejected by the Guard.
-Now, let's see how this works in practice.
-3. The Live Demo
-Before we begin, a word about the AI. KhataPilot is designed to run on Claude, Anthropic's language model. But we also built our own rule-based planner. Simple requests, like checking today's sales or recording a transaction, are handled immediately without calling an LLM. More complex requests go to Claude.
-Today, we're running offline, so our planner temporarily plays the role of the AI.
-[Open the application]
-The first thing the shop owner sees is our conversational interface. This is the central hub of KhataPilot. From here, he can manage transactions, explore his ledger, generate forecasts and access financial insights through natural conversation.
-On the right is the Decision Trace. Every proposed action appears here with its initiator, risk tier, security checks and final decision. Green means allowed; red means rejected. Provider balances are visible above it.
-[Move to Ledger]
-This is his digital khata.
-At the top, he sees today's sales, credit given and received, money in and out, and available cash. Below that, he sees where his money is held: cash, bKash, Nagad or bank accounts.
-Then comes his complete transaction history, outstanding customer dues, how long payments have been pending, and supplier bills with their due dates.
-He can paste transaction SMS directly or connect his Android phone to record bKash, Nagad and bank transactions automatically. He can also track reminders and payments made through KhataPilot.
-[Move to Forecast]
-But knowing today's balance isn't enough. What happens to his cash next week?
-The Forecast answers that. It projects his cash position over the next 14 days, identifies potential shortfalls, the exact day they occur, and the bills responsible.
-It uses his historical sales, weekly spending patterns, upcoming bills and customer repayment behaviour. It then suggests solutions, like collecting overdue credit or negotiating with suppliers.
-Every suggested solution is tested against the forecast before being recommended. A daily automated check also monitors potential shortfalls.
-[Move to Savings and Growth Plan]
-Next is Savings. He can set aside 5% to 30% of his monthly profit, with the amount automatically adjusted to protect his operating cash buffer.
-He can create goals like Eid stock or a new refrigerator, receive suggestions for savings products such as DPS and Sanchayapatra, and see three possible 12-month profit paths through the Growth Plan.
-The plan also shows where his money went last month, what stage his business is in, and which actions could help it grow.
-[Move to Credit and Loans]
-Now, what if his khata could do more than track money? What if it could help him access credit?
-With his explicit consent, KhataPilot builds a credit profile based on his business behaviour. It assigns a risk band from A to E and explains what improves or hurts his score.
-Here, he's in Band B, indicating low risk, with an estimated 6% probability of falling behind on repayments.
-His supplier payment discipline and sales stability help him, while slow sales growth holds him back.
-And when he needs financing, KhataPilot finds options his business can actually afford. It evaluates eligibility and repayment capacity, ranks matching services by compatibility and explains why other products don't qualify.
-The lender receives only the necessary financial summary, never his complete ledger or his customers' identities.
-[Move to Limits]
-The Limits tab is where the owner sets boundaries the AI cannot change.
-He controls per-payment and daily spending limits, manages trusted payees, and can block unwanted SMS senders. Every change to these security settings requires his PIN. The STOP switch is also available here.
-[Move to Audit and Alerts]
-The Audit tab maintains a permanent, tamper-evident record of proposed actions, Guard decisions, approvals, payments and blocked attempts. Every entry is cryptographically chained, and he can verify the integrity of the entire chain with one click.
-The Alerts tab brings everything requiring attention into four groups: Security, Payments, Cash and Credit, and Customers.
-He can also generate two monthly reports: a detailed personal report and a limited financial summary suitable for sharing with banks or NGOs.
-4. Why Does This Hold Beyond a Demo?
-There are four reasons.
-First, there's no path around the Guard. The AI cannot directly access the database, payment infrastructure or signing key. Fifteen architecture tests enforce this separation.
-Second, every action is cryptographically signed for its exact payee and amount, then independently verified by the provider.
-Third, the financial facts and security rules live outside the AI.
-Fourth, every event is recorded in a tamper-evident log, and three blocked attempts within fifteen minutes automatically trigger STOP.
-5. We Attacked Our Own System
-We didn't just test the Guard with normal requests. We built our own Red Team system and attacked KhataPilot in 115 different scenarios.
-We tested hidden instructions in SMS messages and invoices, Banglish prompt injections, fake bKash support, split payments, PIN fishing and even direct attempts to bypass the payment provider.
-We assumed the AI was fooled every time and checked one thing: did money leave?
-115 out of 115 attacks were stopped.
-But blocking everything isn't security. So we tested 42 genuine requests that looked suspicious. All 42 were allowed, with zero false positives in that test set.
-We also tested real Claude against 54 sampled attacks. All were stopped.
-[Point at the chart.]
-Eight different security layers contributed to stopping these attacks. That's defence in depth.
-6. The Intelligence Behind It
-Three ML models power KhataPilot's financial insights.
-First, Fraud Sentinel, an earlier ML project of mine. It uses nearly 285,000 real-world credit-card transactions, including confirmed fraud cases, to train a cascade architecture combining an Autoencoder and CatBoost.
-Integrated into KhataPilot, it detects 87% of fraud in our current evaluation, compared with 43% for rules alone. It still has weaknesses, which is why new payees always require PIN verification.
-Our cash forecast also outperforms simple averages, although the improvement is modest.
-Finally, our Credit Model uses LightGBM trained on 400 simulated Bangladeshi shop profiles. It evaluates supplier payment discipline, sales volatility and customer repayment behaviour, achieving a ROC-AUC of 0.729 against a theoretical ceiling of 0.779 on this dataset.
-7. Built for Real Conditions
-And finally, KhataPilot is lightweight.
-Even on a low-end device with a slow 4G connection, the shop's data loads in about two seconds. On subsequent visits, it takes around half a second because data is cached locally. Only live updates need to be synchronized.
-And even without an internet connection, the application opens and works with previously synchronized data.
-We built KhataPilot for the devices, businesses and network conditions small shop owners actually have.
-Thank you.
+For this project, my team held detailed discussions with over 70 shop owners across various locations in Dhaka.
+In most cases, they expressed similar needs, such as:
+1. Reminders for outstanding payments (dues)
+2. Smart bookkeeping
+3. Advice on managing cash shortfalls
+4. Guidance on savings
+5. Assistance in securing loans
+6. Secure payments to suppliers
 
